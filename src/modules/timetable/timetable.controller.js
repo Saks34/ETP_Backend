@@ -1,6 +1,6 @@
 const { Timetable } = require('./timetable.model');
 const { Institution } = require('../institution/institution.model');
-const { LiveClass } = require('./liveclass.model');
+const { LiveClass } = require('../liveClass/liveclass.model');
 const { createNotification } = require('../notification/notification.service');
 
 function getInstitutionContext(req) {

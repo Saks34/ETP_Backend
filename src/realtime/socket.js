@@ -1,7 +1,7 @@
 const { Server } = require('socket.io');
 const { verifyAccessToken } = require('../modules/auth/token.service');
 const { User } = require('../modules/auth/user.model');
-const { LiveClass } = require('../modules/timetable/liveclass.model');
+const { LiveClass } = require('../modules/liveClass/liveclass.model');
 const { Timetable } = require('../modules/timetable/timetable.model');
 const { ChatMessage } = require('../modules/liveClass/chatMessage.model');
 const { LiveClassState } = require('../modules/liveClass/liveclassState.model');
@@ -60,7 +60,7 @@ function initSocket(server) {
           socket.data.user.institutionId = String(user.institutionId);
           return socket.data.user.institutionId;
         }
-      } catch (_) {}
+      } catch (_) { }
       return null;
     }
 
@@ -72,7 +72,7 @@ function initSocket(server) {
           socket.data.user.name = user.name;
           return user.name;
         }
-      } catch (_) {}
+      } catch (_) { }
       return 'Unknown';
     }
 
@@ -131,7 +131,7 @@ function initSocket(server) {
           // Send in chronological order
           const ordered = history.reverse();
           socket.emit('chat-history', { liveClassId: room, messages: ordered });
-        } catch (_) {}
+        } catch (_) { }
 
         // Broadcast system join
         const joinEvent = {
@@ -152,7 +152,7 @@ function initSocket(server) {
             role,
             ts: new Date(joinEvent.ts),
           });
-        } catch (_) {}
+        } catch (_) { }
         if (typeof ack === 'function') ack({ ok: true });
       } catch (e) {
         if (typeof ack === 'function') ack({ ok: false, error: e.message || 'join failed' });
@@ -188,7 +188,7 @@ function initSocket(server) {
               ts: new Date(leaveEvent.ts),
             });
           }
-        } catch (_) {}
+        } catch (_) { }
         if (typeof ack === 'function') ack({ ok: true });
       } catch (e) {
         if (typeof ack === 'function') ack({ ok: false, error: e.message || 'leave failed' });
@@ -264,7 +264,7 @@ function initSocket(server) {
             role: message.role,
             ts: new Date(message.ts),
           });
-        } catch (_) {}
+        } catch (_) { }
         if (typeof ack === 'function') ack({ ok: true });
       } catch (e) {
         if (typeof ack === 'function') ack({ ok: false, error: e.message || 'send failed' });
@@ -321,7 +321,7 @@ function initSocket(server) {
             role: system.by.role,
             ts: new Date(system.ts),
           });
-        } catch (_) {}
+        } catch (_) { }
         if (typeof ack === 'function') ack({ ok: true });
       } catch (e) {
         if (typeof ack === 'function') ack({ ok: false, error: e.message || 'mute failed' });
@@ -356,7 +356,7 @@ function initSocket(server) {
             role: system.by.role,
             ts: new Date(system.ts),
           });
-        } catch (_) {}
+        } catch (_) { }
         if (typeof ack === 'function') ack({ ok: true });
       } catch (e) {
         if (typeof ack === 'function') ack({ ok: false, error: e.message || 'unmute failed' });
@@ -375,7 +375,7 @@ function initSocket(server) {
         for (const s of sockets) {
           const uid = s?.data?.user?.id;
           if (String(uid) === String(targetUserId)) {
-            try { await s.leave(room); } catch (_) {}
+            try { await s.leave(room); } catch (_) { }
           }
         }
         const system = {
@@ -397,7 +397,7 @@ function initSocket(server) {
             role: system.by.role,
             ts: new Date(system.ts),
           });
-        } catch (_) {}
+        } catch (_) { }
         if (typeof ack === 'function') ack({ ok: true });
       } catch (e) {
         if (typeof ack === 'function') ack({ ok: false, error: e.message || 'remove failed' });
@@ -429,7 +429,7 @@ function initSocket(server) {
             role: system.by.role,
             ts: new Date(system.ts),
           });
-        } catch (_) {}
+        } catch (_) { }
         if (typeof ack === 'function') ack({ ok: true });
       } catch (e) {
         if (typeof ack === 'function') ack({ ok: false, error: e.message || 'clear failed' });
@@ -488,7 +488,7 @@ function initSocket(server) {
             role: system.by.role,
             ts: new Date(system.ts),
           });
-        } catch (_) {}
+        } catch (_) { }
 
         // Optional: attach notes to this class and subject
         try {
@@ -516,13 +516,13 @@ function initSocket(server) {
               await Note.insertMany(docs);
             }
           }
-        } catch (_) {}
+        } catch (_) { }
 
         // Disconnect all users in the room and prevent new joins (enforced via state check above)
         const sockets = await liveNs.in(room).fetchSockets();
         for (const s of sockets) {
-          try { await s.leave(room); } catch (_) {}
-          try { s.disconnect(true); } catch (_) {}
+          try { await s.leave(room); } catch (_) { }
+          try { s.disconnect(true); } catch (_) { }
         }
 
         if (typeof ack === 'function') ack({ ok: true });

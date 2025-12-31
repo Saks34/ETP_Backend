@@ -8,8 +8,19 @@ const liveClassRoutes = require('./modules/liveClass/liveclass.routes');
 const uploadRoutes = require('./modules/uploads/uploads.routes');
 const notesRoutes = require('./modules/notes/notes.routes');
 const batchRoutes = require('./modules/batch/batch.routes');
+const commentRoutes = require('./modules/liveClass/comment.routes');
+const analyticsRoutes = require('./modules/analytics/analytics.routes');
+const securityMiddleware = require('./middleware/security');
+const { apiLimiter } = require('./middleware/rateLimiter');
+const { requestLogger } = require('./utils/logger');
 
 const app = express();
+
+// Apply security middleware first
+app.use(securityMiddleware);
+
+// Request logging
+app.use(requestLogger);
 
 // CORS configuration
 const allowedOrigin = process.env.CORS_ORIGIN || '*';
@@ -22,6 +33,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
+// Apply rate limiting to all API routes
+app.use('/api', apiLimiter);
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/institutions', institutionRoutes);
@@ -31,6 +45,8 @@ app.use('/api/live-classes', liveClassRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/batches', batchRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {

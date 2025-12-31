@@ -1,4 +1,4 @@
-const { LiveClass } = require('../timetable/liveclass.model');
+const { LiveClass } = require('./liveclass.model');
 const { Timetable } = require('../timetable/timetable.model');
 const { createLiveStream, createLiveBroadcast, bindBroadcastToStream, endLiveBroadcast, getStreamStatus: getYouTubeStreamStatus } = require('./youtube.service');
 
@@ -252,7 +252,8 @@ async function getLiveClass(req, res) {
       teacher: live.timetableId?.teacher, // Object (populated)
       startTime: live.timetableId?.startTime,
       endTime: live.timetableId?.endTime,
-      youtubeUrl: live.streamInfo?.liveUrl // Backwards compatibility if needed
+      youtubeUrl: live.streamInfo?.liveUrl, // Backwards compatibility if needed
+      recordings: live.recordings || []
     };
 
     return res.status(200).json(response);
@@ -380,6 +381,18 @@ async function endLiveClass(req, res) {
 
     console.log('[Controller] 💾 Updating LiveClass status to Completed...');
     live.status = 'Completed';
+    live.actualEndTime = new Date();
+
+    // Auto-save recording details from broadcast ID
+    if (broadcastId) {
+      live.recordings.push({
+        youtubeVideoId: broadcastId,
+        title: 'Recorded Class',
+        url: `https://www.youtube.com/watch?v=${broadcastId}`,
+        publishedAt: new Date()
+      });
+    }
+
     await live.save();
     console.log('[Controller] ✅ LiveClass status updated successfully');
 
@@ -422,9 +435,19 @@ async function checkStreamStatus(req, res) {
     // Auto-update LiveClass status based on YouTube status
     if (ytStatus?.lifeCycleStatus === 'live' && live.status !== 'Live') {
       live.status = 'Live';
+      if (!live.actualStartTime) live.actualStartTime = new Date();
       await live.save();
     } else if (ytStatus?.lifeCycleStatus === 'complete' && live.status !== 'Completed') {
       live.status = 'Completed';
+      live.actualEndTime = new Date();
+      if (broadcastId) {
+        live.recordings.push({
+          youtubeVideoId: broadcastId,
+          title: 'Recorded Class',
+          url: `https://www.youtube.com/watch?v=${broadcastId}`,
+          publishedAt: new Date()
+        });
+      }
       await live.save();
     }
 

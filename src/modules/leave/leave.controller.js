@@ -1,6 +1,6 @@
 const { Leave } = require('./leave.model');
 const { Timetable } = require('../timetable/timetable.model');
-const { LiveClass } = require('../timetable/liveclass.model');
+const { LiveClass } = require('../liveClass/liveclass.model');
 const { Institution } = require('../institution/institution.model');
 const { createNotification } = require('../notification/notification.service');
 const { endLiveBroadcast, setBroadcastPrivacy } = require('../liveClass/youtube.service');
@@ -59,7 +59,7 @@ async function applyLeave(req, res) {
     const startMinutes = slot && slot.startTime ? toMinutes(slot.startTime) : null;
     const endMinutes = slot && slot.endTime ? toMinutes(slot.endTime) : null;
     if (startMinutes != null && endMinutes != null) {
-      overlapExpr = { $expr: { $and: [ { $lt: ['$startMinutes', endMinutes] }, { $gt: ['$endMinutes', startMinutes] } ] } };
+      overlapExpr = { $expr: { $and: [{ $lt: ['$startMinutes', endMinutes] }, { $gt: ['$endMinutes', startMinutes] }] } };
     }
 
     const timetableQuery = overlapExpr ? { ...filter, ...overlapExpr } : filter;
@@ -109,7 +109,7 @@ async function applyLeave(req, res) {
               date: leaveDate.toISOString(),
             },
           });
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Attempt to end or hide any associated YouTube broadcasts to prevent dead join links
@@ -123,10 +123,10 @@ async function applyLeave(req, res) {
                 await endLiveBroadcast(broadcastId);
               } catch (e) {
                 // Fallback: set privacy to private if ending fails
-                try { await setBroadcastPrivacy(broadcastId, 'private'); } catch (_) {}
+                try { await setBroadcastPrivacy(broadcastId, 'private'); } catch (_) { }
               }
             }
-          } catch (_) {}
+          } catch (_) { }
 
           // Clear join link to ensure students don't see dead links
           if (live.streamInfo) {
@@ -134,7 +134,7 @@ async function applyLeave(req, res) {
             live.streamInfo.privacyStatus = 'private';
           }
           // Persist updated stream info
-          try { await live.save(); } catch (_) {}
+          try { await live.save(); } catch (_) { }
         }
       } catch (e) {
         // Safe log only; do not change cancellation outcome
