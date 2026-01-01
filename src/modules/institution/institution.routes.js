@@ -1,5 +1,5 @@
 const express = require('express');
-const { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, listStaff } = require('./institution.controller');
+const { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, listStaff, deleteStaff, updateStaff } = require('./institution.controller');
 const { auth, requireRoles } = require('../auth/auth.middleware');
 
 const router = express.Router();
@@ -29,6 +29,22 @@ router.patch(
   auth,
   requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   updateUserRole
+);
+
+// Update staff details within an institution (InstitutionAdmin, AcademicAdmin, SuperAdmin)
+router.patch(
+  '/staff/:userId',
+  auth,
+  requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  updateStaff
+);
+
+// Delete staff within an institution (InstitutionAdmin, AcademicAdmin, SuperAdmin)
+router.delete(
+  '/staff/:userId',
+  auth,
+  requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  deleteStaff
 );
 
 // Bulk add staff (InstitutionAdmin only)

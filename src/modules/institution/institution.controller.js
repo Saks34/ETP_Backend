@@ -430,32 +430,112 @@ async function listStaff(req, res) {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
-    const { role } = req.query || {};
-    const filter = { institutionId: new ObjectId(String(institutionId)) };
-
-    // Filter by role if specified
-    if (role && ['Teacher', 'Student', 'Moderator', 'AcademicAdmin'].includes(role)) {
-      filter.role = role;
-    } else if (!role) {
-      // Default: show teachers and students only
-      filter.role = { $in: ['Teacher', 'Student', 'Moderator', 'AcademicAdmin'] };
-    }
-
     await connectMongo();
     const db = getDB();
-    const usersCol = db.collection(USERS);
-
-    const staff = await usersCol
-      .find(filter, { projection: { password: 0 } })
-      .sort({ createdAt: -1 })
+    const staffList = await db
+      .collection(USERS)
+      .find({ institutionId: new ObjectId(institutionId) })
+      .project({ password: 0 })
       .toArray();
 
-    const sanitizedStaff = staff.map(user => sanitizeUser(user));
-    return res.status(200).json({ staff: sanitizedStaff });
+    // Convert _id to id for frontend compatibility
+    const sanitized = staffList.map(user => {
+      const { _id, ...rest } = user;
+      return {
+        id: _id.toString(),
+        _id: _id.toString(),
+        ...rest,
+        institutionId: rest.institutionId?.toString(),
+        batchId: rest.batchId?.toString()
+      };
+    });
+
+    return res.status(200).json({
+      staff: sanitized
+    });
   } catch (err) {
     console.error('listStaff error:', err);
     return res.status(500).json({ message: 'Failed to fetch staff' });
   }
 }
 
-module.exports = { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, listStaff };
+async function deleteStaff(req, res) {
+  try {
+    const { userId } = req.params;
+    const { institutionId, role: actorRole } = req.user;
+
+    // Verify the user exists and belongs to the same institution
+    const db = getDB();
+    const targetUser = await db.collection(USERS).findOne({
+      _id: new ObjectId(userId),
+      institutionId: new ObjectId(institutionId)
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found or not in your institution' });
+    }
+
+    // Only InstitutionAdmin and AcademicAdmin can delete staff
+    // Don't allow deleting yourself
+    if (targetUser._id.toString() === req.user.userId) {
+      return res.status(403).json({ message: 'Cannot delete yourself' });
+    }
+
+    // Delete the user
+    await db.collection(USERS).deleteOne({ _id: new ObjectId(userId) });
+
+    return res.status(200).json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+  } catch (err) {
+    console.error('deleteStaff error:', err);
+    return res.status(500).json({ message: 'Failed to delete user', error: err.message });
+  }
+}
+
+async function updateStaff(req, res) {
+  try {
+    const { userId } = req.params;
+    const { name, role, batchId } = req.body;
+    const { institutionId, role: actorRole } = req.user;
+
+    // Verify the user exists and belongs to the same institution
+    const db = getDB();
+    const targetUser = await db.collection(USERS).findOne({
+      _id: new ObjectId(userId),
+      institutionId: new ObjectId(institutionId)
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found or not in your institution' });
+    }
+
+    // Build update object
+    const updateObj = {
+      updatedAt: new Date()
+    };
+
+    if (name) updateObj.name = name;
+    if (role && canAssignRole(actorRole, role)) updateObj.role = role;
+    if (batchId !== undefined) {
+      updateObj.batchId = batchId ? new ObjectId(batchId) : null;
+    }
+
+    // Update the user
+    await db.collection(USERS).updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: updateObj }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'User updated successfully'
+    });
+  } catch (err) {
+    console.error('updateStaff error:', err);
+    return res.status(500).json({ message: 'Failed to update user', error: err.message });
+  }
+}
+
+module.exports = { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, listStaff, deleteStaff, updateStaff };

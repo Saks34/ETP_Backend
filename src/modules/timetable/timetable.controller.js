@@ -235,8 +235,20 @@ async function listAll(req, res) {
     const slots = await Timetable.find(filter)
       .populate('teacher', 'name email')
       .populate('batch', 'name')
+      .populate('liveClassId', 'status streamInfo')
       .sort({ startMinutes: 1, endMinutes: 1 });
-    return res.status(200).json({ slots });
+
+    // Attach liveClass data to each slot for easier access
+    const enrichedSlots = slots.map(slot => {
+      const slotObj = slot.toObject();
+      if (slotObj.liveClassId) {
+        slotObj.liveClass = slotObj.liveClassId;
+        slotObj.status = slotObj.liveClassId.status || 'Scheduled';
+      }
+      return slotObj;
+    });
+
+    return res.status(200).json({ slots: enrichedSlots });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to fetch timetable' });
   }
@@ -278,8 +290,20 @@ async function listByTeacher(req, res) {
     const slots = await Timetable.find(filter)
       .populate('teacher', 'name email')
       .populate('batch', 'name')
+      .populate('liveClassId', 'status streamInfo')
       .sort({ startMinutes: 1, endMinutes: 1 });
-    return res.status(200).json({ slots });
+
+    // Attach liveClass data to each slot for easier access
+    const enrichedSlots = slots.map(slot => {
+      const slotObj = slot.toObject();
+      if (slotObj.liveClassId) {
+        slotObj.liveClass = slotObj.liveClassId;
+        slotObj.status = slotObj.liveClassId.status || 'Scheduled';
+      }
+      return slotObj;
+    });
+
+    return res.status(200).json({ slots: enrichedSlots });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to fetch timetable' });
   }
@@ -308,8 +332,20 @@ async function listByBatch(req, res) {
     const slots = await Timetable.find(filter)
       .populate('teacher', 'name email')
       .populate('batch', 'name')
+      .populate('liveClassId', 'status streamInfo')
       .sort({ startMinutes: 1, endMinutes: 1 });
-    return res.status(200).json({ slots });
+
+    // Attach liveClass data to each slot for easier access  
+    const enrichedSlots = slots.map(slot => {
+      const slotObj = slot.toObject();
+      if (slotObj.liveClassId) {
+        slotObj.liveClass = slotObj.liveClassId;
+        slotObj.status = slotObj.liveClassId.status || 'Scheduled';
+      }
+      return slotObj;
+    });
+
+    return res.status(200).json({ slots: enrichedSlots });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to fetch timetable' });
   }
