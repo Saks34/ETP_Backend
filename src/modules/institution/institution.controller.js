@@ -11,6 +11,7 @@ function sanitizeInstitution(inst) {
   return {
     id: inst._id,
     name: inst.name,
+    type: inst.type || 'school',
     logo: inst.logo || null,
     status: inst.status,
     createdAt: inst.createdAt,
@@ -39,7 +40,7 @@ function _cleanupExports() {
 
 async function registerInstitution(req, res) {
   try {
-    const { name, logo, admin } = req.body || {};
+    const { name, type, logo, admin } = req.body || {};
     if (!name || !admin || !admin?.name || !admin?.email || !admin?.password) {
       return res.status(400).json({ message: 'name and admin{name,email,password} are required' });
     }
@@ -66,6 +67,7 @@ async function registerInstitution(req, res) {
     const now = new Date();
     const instDoc = {
       name: name.trim(),
+      type: type || 'school',
       logo: logo || null,
       status: 'ACTIVE', // status set to ACTIVE
       createdAt: now,
@@ -430,11 +432,17 @@ async function listStaff(req, res) {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
+    const query = { institutionId: new ObjectId(institutionId) };
+    if (req.query.role) {
+      const roles = req.query.role.split(',').map(r => r.trim());
+      query.role = { $in: roles };
+    }
+
     await connectMongo();
     const db = getDB();
     const staffList = await db
       .collection(USERS)
-      .find({ institutionId: new ObjectId(institutionId) })
+      .find(query)
       .project({ password: 0 })
       .toArray();
 

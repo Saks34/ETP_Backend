@@ -19,7 +19,6 @@ router.get(
   listNotes
 );
 
-module.exports = router;
 // Student read-only endpoints
 router.get('/by-batch', auth, listNotesByBatchStudent);
 router.get('/by-subject', auth, listNotesBySubjectStudent);
@@ -32,3 +31,5 @@ router.delete(
   requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   deleteNote
 );
+
+module.exports = router;
