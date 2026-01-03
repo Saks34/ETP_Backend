@@ -121,6 +121,10 @@ function initSocket(server) {
         }
         await socket.join(room);
 
+        // Emit updated viewer count
+        const count = io.sockets.adapter.rooms.get(room)?.size || 0;
+        liveNs.to(room).emit('viewer-count', { count });
+
         // Send recent chat history
         const limit = Math.max(1, Math.min(parseInt(historyLimit || '50', 10) || 50, 200));
         try {
@@ -186,6 +190,11 @@ function initSocket(server) {
         if (!liveClassId) throw new Error('liveClassId is required');
         const room = String(liveClassId);
         await socket.leave(room);
+
+        // Emit updated viewer count
+        const count = io.sockets.adapter.rooms.get(room)?.size || 0;
+        liveNs.to(room).emit('viewer-count', { count });
+
         const leaveEvent = {
           userId: socket.data.user.id,
           role: socket.data.user.role,

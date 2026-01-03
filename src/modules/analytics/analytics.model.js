@@ -11,6 +11,17 @@ const AnalyticsSchema = new mongoose.Schema(
         avgWatchTimeSeconds: { type: Number, default: 0 },
         totalChatMessages: { type: Number, default: 0 },
 
+        // Watch time analytics (heartbeat-based)
+        totalWatchTimeSeconds: { type: Number, default: 0 },
+        uniqueViewers: { type: Number, default: 0 },
+        watchTimeByUser: [
+            {
+                userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+                watchTimeSeconds: { type: Number, default: 0 },
+                lastHeartbeat: { type: Date }
+            }
+        ],
+
         // Snapshots for graphs (e.g. viewer count every 5 mins)
         viewerCountHistory: [
             {

@@ -9,6 +9,10 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 
 async function handleUpload(req, res, folder) {
   try {
+    if (!cloudinary?.uploader || !cloudinary?.config()?.cloud_name) {
+      console.error('[Upload] ❌ Cloudinary not configured');
+      return res.status(503).json({ message: 'Storage service unavailable' });
+    }
     if (!req.file || !req.file.buffer) return res.status(400).json({ message: 'file is required' });
     const result = await uploadBuffer(req.file.buffer, folder, { public_id: undefined });
     const { secure_url, public_id, resource_type } = result;
@@ -19,8 +23,8 @@ async function handleUpload(req, res, folder) {
   }
 }
 
-// Notes uploads - Teacher/Admin only
-router.post('/notes', auth, requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'), upload.single('file'), (req, res) => handleUpload(req, res, 'notes'));
+// Notes uploads - Teacher/Moderator/Admin only
+router.post('/notes', auth, requireRoles('Teacher', 'Moderator', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'), upload.single('file'), (req, res) => handleUpload(req, res, 'notes'));
 
 // Doubts uploads - Student/Teacher/Admin
 router.post('/doubts', auth, upload.single('file'), (req, res) => handleUpload(req, res, 'doubts'));

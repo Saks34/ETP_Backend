@@ -12,11 +12,11 @@ router.get(
   getTeacherStreamKey
 );
 
-// Student: Get join live stream link
+// Student/Moderator: Get join live stream link
 router.get(
   '/:id/join',
   auth,
-  requireRoles('Student', 'Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  requireRoles('Student', 'Moderator', 'Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getJoinLink
 );
 
@@ -24,7 +24,7 @@ router.get(
 router.get(
   '/by-timetable/:timetableId',
   auth,
-  requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  requireRoles('Teacher', 'Moderator', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getOrCreateByTimetable
 );
 
@@ -32,7 +32,7 @@ router.get(
 router.get(
   '/:id',
   auth,
-  requireRoles('Teacher', 'Student', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  requireRoles('Teacher', 'Moderator', 'Student', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getLiveClass
 );
 
