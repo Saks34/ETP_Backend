@@ -144,7 +144,9 @@ async function listNotesByBatchStudent(req, res) {
     if (error) return res.status(error.code).json({ message: error.message });
 
     const role = req.user && req.user.role;
-    if (role !== 'Student') return res.status(403).json({ message: 'Forbidden' });
+    if (!['Student', 'Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'].includes(role)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
 
     const { batchId } = req.query || {};
     if (!batchId) return res.status(400).json({ message: 'batchId is required' });
@@ -178,7 +180,9 @@ async function listNotesBySubjectStudent(req, res) {
     if (error) return res.status(error.code).json({ message: error.message });
 
     const role = req.user && req.user.role;
-    if (role !== 'Student') return res.status(403).json({ message: 'Forbidden' });
+    if (!['Student', 'Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'].includes(role)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
 
     const { batchId, subjectId } = req.query || {};
     if (!batchId || !subjectId) return res.status(400).json({ message: 'batchId and subjectId are required' });
@@ -212,7 +216,9 @@ async function listNotesByClassStudent(req, res) {
     if (error) return res.status(error.code).json({ message: error.message });
 
     const role = req.user && req.user.role;
-    if (role !== 'Student') return res.status(403).json({ message: 'Forbidden' });
+    if (!['Student', 'Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'].includes(role)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
 
     const { batchId, liveClassId } = req.query || {};
     if (!batchId || !liveClassId) return res.status(400).json({ message: 'batchId and liveClassId are required' });

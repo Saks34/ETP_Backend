@@ -1,5 +1,6 @@
 const { LiveClass } = require('./liveclass.model');
 const { Timetable } = require('../timetable/timetable.model');
+const { getIO } = require('../../realtime/socket');
 const { createLiveStream, createLiveBroadcast, bindBroadcastToStream, endLiveBroadcast, getStreamStatus: getYouTubeStreamStatus } = require('./youtube.service');
 
 async function scheduleLiveClass(req, res) {
@@ -74,8 +75,15 @@ async function scheduleLiveClass(req, res) {
       startTime: timetable.startTime
     });
 
-    const streamTitle = title || `${timetable.subject} - ${timetable.batch} - ${timetable.day} ${timetable.startTime}`;
+    // Use custom title if set, otherwise generate default
+    const streamTitle = live.title || title || `${timetable.subject} - ${timetable.batch} - ${timetable.day} ${timetable.startTime}`;
     console.log('[Controller] 📝 Stream title:', streamTitle);
+
+    // Ensure title is saved if it wasn't before
+    if (!live.title) {
+      live.title = streamTitle;
+      await live.save();
+    }
 
     // Schedule stream to start 5 minutes from now (YouTube requires future time)
     const scheduledStartTime = new Date();
@@ -253,7 +261,9 @@ async function getLiveClass(req, res) {
       startTime: live.timetableId?.startTime,
       endTime: live.timetableId?.endTime,
       youtubeUrl: live.streamInfo?.liveUrl, // Backwards compatibility if needed
-      recordings: live.recordings || []
+      recordings: live.recordings || [],
+      analytics: live.analytics || {},
+      moderation: live.moderation || {}
     };
 
     return res.status(200).json(response);
@@ -316,7 +326,9 @@ async function getOrCreateByTimetable(req, res) {
       endTime: populated.timetableId.endTime,
       teacher: populated.timetableId.teacher,
       batchId: populated.timetableId.batchId,
-      subjectId: populated.timetableId.subjectId
+      subjectId: populated.timetableId.subjectId,
+      analytics: populated.analytics || {},
+      moderation: populated.moderation || {}
     };
 
     console.log('[Controller] ✅ Returning response:', { liveClassId: response._id });
@@ -396,6 +408,17 @@ async function endLiveClass(req, res) {
     await live.save();
     console.log('[Controller] ✅ LiveClass status updated successfully');
 
+    // Emit socket event
+    try {
+      const io = getIO();
+      io.of('/live-classes').to(String(live._id)).emit('class-ended', {
+        liveClassId: live._id,
+        status: 'Completed'
+      });
+    } catch (e) {
+      console.error('Socket emit error:', e);
+    }
+
     console.log('[Controller] 🎉 Stream ended successfully, sending response');
     return res.status(200).json({ message: 'Stream ended', status: 'Completed' });
   } catch (err) {
@@ -437,6 +460,29 @@ async function checkStreamStatus(req, res) {
       live.status = 'Live';
       if (!live.actualStartTime) live.actualStartTime = new Date();
       await live.save();
+
+      // Emit socket event
+      try {
+        const io = getIO();
+        io.of('/live-classes').to(String(live._id)).emit('class-ended', {
+          liveClassId: live._id,
+          status: 'Completed'
+        });
+      } catch (e) {
+        console.error('Socket emit error:', e);
+      }
+
+      // Emit socket event
+      try {
+        const io = getIO();
+        io.of('/live-classes').to(String(live._id)).emit('class-live', {
+          liveClassId: live._id,
+          status: 'Live',
+          streamInfo: live.streamInfo
+        });
+      } catch (e) {
+        console.error('Socket emit error:', e);
+      }
     } else if (ytStatus?.lifeCycleStatus === 'complete' && live.status !== 'Completed') {
       live.status = 'Completed';
       live.actualEndTime = new Date();
@@ -464,4 +510,120 @@ async function checkStreamStatus(req, res) {
   }
 }
 
-module.exports = { scheduleLiveClass, getTeacherStreamKey, getJoinLink, getLiveClass, getOrCreateByTimetable, endLiveClass, checkStreamStatus };
+
+async function updateModeration(req, res) {
+  try {
+    const { id } = req.params;
+    const { slowMode, subscribersOnly, blockLinks, blockedWords } = req.body || {};
+
+    const live = await LiveClass.findById(id);
+    if (!live) return res.status(404).json({ message: 'LiveClass not found' });
+
+    // Scope check
+    if (req.user && req.user.role !== 'SuperAdmin') {
+      if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+    }
+
+    if (slowMode !== undefined) live.moderation.slowMode = slowMode;
+    if (subscribersOnly !== undefined) live.moderation.subscribersOnly = subscribersOnly;
+    if (blockLinks !== undefined) live.moderation.blockLinks = blockLinks;
+    if (blockedWords !== undefined) live.moderation.blockedWords = blockedWords;
+
+    await live.save();
+    return res.status(200).json(live.moderation);
+  } catch (err) {
+    console.error('updateModeration error:', err);
+    return res.status(500).json({ message: 'Failed to update moderation settings' });
+  }
+}
+
+async function getModeration(req, res) {
+  try {
+    const { id } = req.params;
+
+    const live = await LiveClass.findById(id);
+    if (!live) return res.status(404).json({ message: 'LiveClass not found' });
+
+    // Scope check
+    if (req.user && req.user.role !== 'SuperAdmin') {
+      if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+    }
+
+    return res.status(200).json(live.moderation || {});
+  } catch (err) {
+    console.error('getModeration error:', err);
+    return res.status(500).json({ message: 'Failed to fetch moderation settings' });
+  }
+}
+
+async function updateAnalytics(req, res) {
+  try {
+    const { id } = req.params;
+    const { peakViewers, totalViews, totalLikes, totalChatMessages } = req.body || {};
+
+    const live = await LiveClass.findById(id);
+    if (!live) return res.status(404).json({ message: 'LiveClass not found' });
+
+    // Scope check
+    if (req.user && req.user.role !== 'SuperAdmin') {
+      if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+    }
+
+    if (!live.analytics) live.analytics = {};
+    if (peakViewers !== undefined) live.analytics.peakViewers = peakViewers;
+    if (totalViews !== undefined) live.analytics.totalViews = totalViews;
+    if (totalLikes !== undefined) live.analytics.totalLikes = totalLikes;
+    if (totalChatMessages !== undefined) live.analytics.totalChatMessages = totalChatMessages;
+
+    await live.save();
+    return res.status(200).json(live.analytics);
+  } catch (err) {
+    console.error('updateAnalytics error:', err);
+    return res.status(500).json({ message: 'Failed to update analytics' });
+  }
+}
+
+async function updateClassDetails(req, res) {
+  try {
+    const { id } = req.params;
+    const { title } = req.body;
+
+    const live = await LiveClass.findById(id);
+    if (!live) return res.status(404).json({ message: 'LiveClass not found' });
+
+    // Scope check
+    if (req.user && req.user.role !== 'SuperAdmin') {
+      if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+    }
+
+    if (title) live.title = title;
+
+    await live.save();
+    return res.status(200).json({ title: live.title, message: 'Class details updated' });
+  } catch (err) {
+    console.error('updateClassDetails error:', err);
+    return res.status(500).json({ message: 'Failed to update class details' });
+  }
+}
+
+module.exports = {
+  scheduleLiveClass,
+  getTeacherStreamKey,
+  getJoinLink,
+  getLiveClass,
+  getOrCreateByTimetable,
+  endLiveClass,
+  checkStreamStatus,
+  updateModeration,
+  getModeration,
+  updateAnalytics,
+  updateClassDetails
+};

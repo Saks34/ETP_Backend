@@ -14,7 +14,8 @@ async function handleUpload(req, res, folder) {
     const { secure_url, public_id, resource_type } = result;
     return res.status(201).json({ secure_url, public_id, resource_type });
   } catch (e) {
-    return res.status(500).json({ message: 'Upload failed' });
+    console.error('[Upload] ❌ Upload failed:', e);
+    return res.status(500).json({ message: 'Upload failed', error: e.message });
   }
 }
 

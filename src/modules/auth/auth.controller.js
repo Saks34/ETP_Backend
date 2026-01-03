@@ -2,14 +2,32 @@ const { User } = require('./user.model');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('./token.service');
 
 function sanitizeUser(user) {
+  // Handle batch - if it's populated it will be an object, otherwise it's an ObjectId
+  let batchData = null;
+  if (user.batchId) {
+    // If batchId is already populated (has a name property), use it
+    if (user.batchId.name) {
+      batchData = {
+        _id: user.batchId._id,
+        name: user.batchId.name
+      };
+    } else {
+      // If not populated, send the ObjectId as both _id and name (fallback)
+      batchData = {
+        _id: user.batchId,
+        name: String(user.batchId)
+      };
+    }
+  }
+
   return {
     id: user._id,
     name: user.name,
     email: user.email,
     role: user.role,
     institutionId: user.institutionId || null,
-    batch: user.batchId || null, // Fix: send batch ID to frontend
-    mustChangePassword: user.mustChangePassword, // expose flag
+    batch: batchData, // properly formatted batch object
+    mustChangePassword: user.mustChangePassword,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -51,7 +69,7 @@ async function login(req, res) {
       return res.status(400).json({ message: 'email and password are required' });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).populate('batchId', 'name');
     if (!user) return res.status(401).json({ message: 'User not found' });
 
     const isMatch = await user.comparePassword(password);
@@ -114,7 +132,7 @@ async function changePassword(req, res) {
     }
 
     const userId = req.user.sub;
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).populate('batchId', 'name');
     if (!user) return res.status(404).json({ message: 'User not found' });
 
     user.password = newPassword; // Will be hashed by pre-save hook

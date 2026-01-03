@@ -9,6 +9,8 @@ const ChatMessageSchema = new mongoose.Schema(
     senderId: { type: String },
     senderName: { type: String },
     role: { type: String },
+    isPinned: { type: Boolean, default: false },
+    isDeleted: { type: Boolean, default: false },
     ts: { type: Date, default: Date.now, index: true },
   },
   { timestamps: true }

@@ -1,8 +1,15 @@
 const stream = require('stream');
 const { cloudinary, CLOUDINARY_BASE_FOLDER } = require('../config/cloudinary');
 
+console.log('[Cloudinary Service] Loaded config:', {
+  cloud_name: cloudinary?.config()?.cloud_name,
+  base_folder: CLOUDINARY_BASE_FOLDER,
+  has_api_key: !!cloudinary?.config()?.api_key,
+  has_api_secret: !!cloudinary?.config()?.api_secret
+});
+
 function bufferToStream(buffer) {
-  const readable = new stream.Readable({ read() {} });
+  const readable = new stream.Readable({ read() { } });
   readable.push(buffer);
   readable.push(null);
   return readable;
@@ -15,7 +22,10 @@ async function uploadBuffer(buffer, folderPath, options = {}) {
     const uploadStream = cloudinary.uploader.upload_stream(
       { folder, resource_type: 'auto', ...options },
       (err, result) => {
-        if (err) return reject(err);
+        if (err) {
+          console.error('[Cloudinary] ❌ Upload stream error:', err);
+          return reject(err);
+        }
         const { secure_url, public_id, resource_type } = result;
         resolve({ secure_url, public_id, resource_type });
       }
