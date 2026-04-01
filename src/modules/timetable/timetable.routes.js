@@ -1,6 +1,7 @@
 const express = require('express');
 const { createSlot, updateSlot, deleteSlot, listAll, listByTeacher, listByBatch } = require('./timetable.controller');
 const { auth, requireRoles } = require('../auth/auth.middleware');
+const { validate, timetableValidation } = require('../../middleware/validator');
 
 const router = express.Router();
 
@@ -32,6 +33,7 @@ router.post(
   '/',
   auth,
   requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  validate(timetableValidation.create),
   createSlot
 );
 
@@ -40,6 +42,7 @@ router.patch(
   '/:id',
   auth,
   requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  validate(timetableValidation.create), // Using create rules as a baseline for patch
   updateSlot
 );
 

@@ -1,6 +1,6 @@
-# TeachFlow - Backend
+# ClassBridge - Backend
 
-The backend API for the TeachFlow educational platform, built with Node.js, Express, and MongoDB. It powers the authentication, data management, and real-time features of the application.
+The backend API for the ClassBridge educational platform, built with Node.js, Express, and MongoDB. It powers the authentication, data management, and real-time features of the application.
 
 ## 🚀 Features
 

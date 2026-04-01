@@ -1,13 +1,16 @@
 const express = require('express');
-const { scheduleLiveClass, getTeacherStreamKey, getJoinLink, getLiveClass, getOrCreateByTimetable, endLiveClass, checkStreamStatus, updateModeration, getModeration, updateAnalytics } = require('./liveclass.controller');
-const { auth, requireRoles } = require('../auth/auth.middleware');
+const { scheduleLiveClass, getTeacherStreamKey, getJoinLink, getLiveClass, getOrCreateByTimetable, endLiveClass, checkStreamStatus, updateModeration, getModeration, updateAnalytics, updateClassDetails, getLiveClassQuestions, getBatchRecordings, getLiveClassSummary, retrySummary } = require('./liveclass.controller');
+const { auth, requireRoles, institutionGuard } = require('../auth/auth.middleware');
+const { validate, liveClassValidation } = require('../../middleware/validator');
 
 const router = express.Router();
+
+// Apply institutionGuard to all routes in this router
+router.use(auth, institutionGuard);
 
 // Teacher: View/Copy stream key (read-only)
 router.get(
   '/:id/stream-key',
-  auth,
   requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getTeacherStreamKey
 );
@@ -15,15 +18,20 @@ router.get(
 // Student/Moderator: Get join live stream link
 router.get(
   '/:id/join',
-  auth,
   requireRoles('Student', 'Moderator', 'Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getJoinLink
+);
+
+// Batch: Get all recordings for a specific batch
+router.get(
+  '/batch/:batchId/recordings',
+  requireRoles('Student', 'Teacher', 'Moderator', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  getBatchRecordings
 );
 
 // Get Live Class by Timetable ID (Get or Create) - Teacher/Admin
 router.get(
   '/by-timetable/:timetableId',
-  auth,
   requireRoles('Teacher', 'Moderator', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getOrCreateByTimetable
 );
@@ -31,23 +39,28 @@ router.get(
 // Get specific Live Class (standard fetch)
 router.get(
   '/:id',
-  auth,
   requireRoles('Teacher', 'Moderator', 'Student', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getLiveClass
+);
+
+// Get Live Class Q&A
+router.get(
+  '/:id/questions',
+  requireRoles('Teacher', 'Moderator', 'Student', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  getLiveClassQuestions
 );
 
 // Schedule a YouTube live stream for a LiveClass (platform-owned channel)
 router.post(
   '/:id/schedule',
-  auth,
   requireRoles('SuperAdmin', 'InstitutionAdmin', 'AcademicAdmin', 'Teacher'),
+  validate(liveClassValidation.schedule),
   scheduleLiveClass
 );
 
 // End a YouTube live stream
 router.post(
   '/:id/end',
-  auth,
   requireRoles('SuperAdmin', 'InstitutionAdmin', 'AcademicAdmin', 'Teacher'),
   endLiveClass
 );
@@ -55,7 +68,6 @@ router.post(
 // Check stream status (polls YouTube API)
 router.get(
   '/:id/status',
-  auth,
   requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   checkStreamStatus
 );
@@ -63,15 +75,14 @@ router.get(
 // Studio: Update Moderation Settings
 router.patch(
   '/:id/moderation',
-  auth,
   requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  validate(liveClassValidation.moderation),
   updateModeration
 );
 
 // Studio: Get Moderation Settings
 router.get(
   '/:id/moderation',
-  auth,
   requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getModeration
 );
@@ -79,7 +90,6 @@ router.get(
 // Studio: Update Analytics (Snapshot)
 router.patch(
   '/:id/analytics',
-  auth,
   requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   updateAnalytics
 );
@@ -87,9 +97,21 @@ router.patch(
 // Studio: Update Class Details (Title, etc.)
 router.patch(
   '/:id/details',
-  auth,
   requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
-  require('./liveclass.controller').updateClassDetails
+  validate(liveClassValidation.details),
+  updateClassDetails
+);
+
+router.get(
+  '/:id/summary',
+  requireRoles('Student', 'Teacher', 'Moderator', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  getLiveClassSummary
+);
+
+router.post(
+  '/:id/summary/retry',
+  requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  retrySummary
 );
 
 module.exports = router;

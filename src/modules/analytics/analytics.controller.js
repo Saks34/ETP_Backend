@@ -1,251 +1,198 @@
 const { Analytics } = require('./analytics.model');
 const { LiveClass } = require('../liveClass/liveclass.model');
 const { Timetable } = require('../timetable/timetable.model');
+const catchAsync = require('../../utils/catchAsync');
+const AppError = require('../../utils/AppError');
+const sendResponse = require('../../utils/response');
 
-async function getLiveClassAnalytics(req, res) {
-    try {
-        const { id } = req.params; // liveClassId
+const getLiveClassAnalytics = catchAsync(async (req, res, next) => {
+    const { id } = req.params;
 
-        const live = await LiveClass.findById(id);
-        if (!live) return res.status(404).json({ message: 'LiveClass not found' });
+    const live = await LiveClass.findById(id);
+    if (!live) return next(new AppError('LiveClass not found', 404));
 
-        // Scope check
-        if (req.user.role !== 'SuperAdmin' && req.user.institutionId) {
-            if (String(live.institutionId) !== String(req.user.institutionId)) {
-                return res.status(403).json({ message: 'Forbidden' });
-            }
+    if (req.user.role !== 'SuperAdmin' && req.user.institutionId) {
+        if (String(live.institutionId) !== String(req.user.institutionId)) {
+            return next(new AppError('Forbidden', 403));
         }
-
-        let analytics = await Analytics.findOne({ liveClassId: id });
-
-        // Create if doesn't exist
-        if (!analytics) {
-            analytics = await Analytics.create({
-                institutionId: live.institutionId,
-                liveClassId: id
-            });
-        }
-
-        return res.status(200).json(analytics);
-    } catch (err) {
-        console.error('getLiveClassAnalytics error:', err);
-        return res.status(500).json({ message: 'Failed to fetch analytics' });
     }
-}
 
-async function getTeacherStats(req, res) {
-    try {
-        const teacherId = req.user.sub;
-        const institutionId = req.user.institutionId;
+    let analytics = await Analytics.findOne({ liveClassId: id });
 
-        // Get all timetables for this teacher
-        const timetables = await Timetable.find({
-            teacher: teacherId,
-            institutionId
+    if (!analytics) {
+        analytics = await Analytics.create({
+            institutionId: live.institutionId,
+            liveClassId: id
         });
-
-        const timetableIds = timetables.map(t => t._id);
-
-        // Get all live classes for these timetables
-        const liveClasses = await LiveClass.find({
-            timetableId: { $in: timetableIds }
-        });
-
-        const liveClassIds = liveClasses.map(lc => lc._id);
-
-        // Get analytics for these classes
-        const analyticsData = await Analytics.find({
-            liveClassId: { $in: liveClassIds }
-        });
-
-        const stats = {
-            totalClasses: liveClasses.length,
-            completedClasses: liveClasses.filter(lc => lc.status === 'Completed').length,
-            liveClasses: liveClasses.filter(lc => lc.status === 'Live').length,
-            totalViews: analyticsData.reduce((sum, a) => sum + (a.totalViews || 0), 0),
-            avgPeakViewers: analyticsData.length > 0
-                ? Math.round(analyticsData.reduce((sum, a) => sum + (a.peakViewers || 0), 0) / analyticsData.length)
-                : 0,
-            totalChatMessages: analyticsData.reduce((sum, a) => sum + (a.totalChatMessages || 0), 0)
-        };
-
-        return res.status(200).json(stats);
-    } catch (err) {
-        console.error('getTeacherStats error:', err);
-        return res.status(500).json({ message: 'Failed to fetch teacher stats' });
     }
-}
 
-async function getAdminStats(req, res) {
-    try {
-        const institutionId = req.user.institutionId;
+    return sendResponse(res, 200, analytics);
+});
 
-        if (!institutionId) {
-            return res.status(400).json({ message: 'Institution ID required' });
-        }
+const getTeacherStats = catchAsync(async (req, res, next) => {
+    const teacherId = req.user.sub || req.user.id;
+    const institutionId = req.user.institutionId;
 
-        const liveClasses = await LiveClass.find({ institutionId });
-        const liveClassIds = liveClasses.map(lc => lc._id);
-        const analyticsData = await Analytics.find({
-            liveClassId: { $in: liveClassIds }
-        });
+    const timetables = await Timetable.find({ teacher: teacherId, institutionId });
+    const timetableIds = timetables.map(t => t._id);
 
-        const stats = {
-            totalClasses: liveClasses.length,
-            completedClasses: liveClasses.filter(lc => lc.status === 'Completed').length,
-            liveClasses: liveClasses.filter(lc => lc.status === 'Live').length,
-            scheduledClasses: liveClasses.filter(lc => lc.status === 'Scheduled').length,
-            totalViews: analyticsData.reduce((sum, a) => sum + (a.totalViews || 0), 0),
-            avgPeakViewers: analyticsData.length > 0
-                ? Math.round(analyticsData.reduce((sum, a) => sum + (a.peakViewers || 0), 0) / analyticsData.length)
-                : 0,
-            totalChatMessages: analyticsData.reduce((sum, a) => sum + (a.totalChatMessages || 0), 0)
-        };
+    const liveClasses = await LiveClass.find({ timetableId: { $in: timetableIds } });
+    const liveClassIds = liveClasses.map(lc => lc._id);
 
-        return res.status(200).json(stats);
-    } catch (err) {
-        console.error('getAdminStats error:', err);
-        return res.status(500).json({ message: 'Failed to fetch admin stats' });
+    const analyticsData = await Analytics.find({ liveClassId: { $in: liveClassIds } });
+
+    const stats = {
+        totalClasses: liveClasses.length,
+        completedClasses: liveClasses.filter(lc => lc.status === 'Completed').length,
+        liveClasses: liveClasses.filter(lc => lc.status === 'Live').length,
+        totalViews: analyticsData.reduce((sum, a) => sum + (a.totalViews || 0), 0),
+        avgPeakViewers: analyticsData.length > 0
+            ? Math.round(analyticsData.reduce((sum, a) => sum + (a.peakViewers || 0), 0) / analyticsData.length)
+            : 0,
+        totalChatMessages: analyticsData.reduce((sum, a) => sum + (a.totalChatMessages || 0), 0)
+    };
+
+    return sendResponse(res, 200, stats);
+});
+
+const getAdminStats = catchAsync(async (req, res, next) => {
+    const institutionId = req.user.institutionId;
+    if (!institutionId) return next(new AppError('Institution ID required', 400));
+
+    const liveClasses = await LiveClass.find({ institutionId });
+    const liveClassIds = liveClasses.map(lc => lc._id);
+    const analyticsData = await Analytics.find({ liveClassId: { $in: liveClassIds } });
+
+    const stats = {
+        totalClasses: liveClasses.length,
+        completedClasses: liveClasses.filter(lc => lc.status === 'Completed').length,
+        liveClasses: liveClasses.filter(lc => lc.status === 'Live').length,
+        scheduledClasses: liveClasses.filter(lc => lc.status === 'Scheduled').length,
+        totalViews: analyticsData.reduce((sum, a) => sum + (a.totalViews || 0), 0),
+        avgPeakViewers: analyticsData.length > 0
+            ? Math.round(analyticsData.reduce((sum, a) => sum + (a.peakViewers || 0), 0) / analyticsData.length)
+            : 0,
+        totalChatMessages: analyticsData.reduce((sum, a) => sum + (a.totalChatMessages || 0), 0)
+    };
+
+    return sendResponse(res, 200, stats);
+});
+
+const recordHeartbeat = catchAsync(async (req, res, next) => {
+    const { classId, duration } = req.body;
+    const userId = req.user.sub || req.user.id;
+
+    if (!classId || !duration) return next(new AppError('classId and duration are required', 400));
+
+    const durationNum = parseInt(duration, 10);
+    if (isNaN(durationNum) || durationNum <= 0 || durationNum > 60) {
+        return next(new AppError('duration must be a number between 1 and 60 seconds', 400));
     }
-}
 
-async function recordHeartbeat(req, res) {
-    try {
-        const { classId, duration } = req.body;
-        const userId = req.user.sub;
+    const live = await LiveClass.findById(classId);
+    if (!live) return next(new AppError('LiveClass not found', 404));
 
-        // Validation
-        if (!classId || !duration) {
-            return res.status(400).json({ message: 'classId and duration are required' });
+    if (req.user.role !== 'SuperAdmin') {
+        if (!req.user.institutionId || String(live.institutionId) !== String(req.user.institutionId)) {
+            return next(new AppError('Forbidden', 403));
         }
-
-        const durationNum = parseInt(duration, 10);
-        if (isNaN(durationNum) || durationNum <= 0 || durationNum > 60) {
-            return res.status(400).json({
-                message: 'duration must be a number between 1 and 60 seconds'
-            });
-        }
-
-        // Load LiveClass for institution scope check
-        const live = await LiveClass.findById(classId);
-        if (!live) {
-            return res.status(404).json({ message: 'LiveClass not found' });
-        }
-
-        // Scope check
-        if (req.user.role !== 'SuperAdmin') {
-            if (!req.user.institutionId || String(live.institutionId) !== String(req.user.institutionId)) {
-                return res.status(403).json({ message: 'Forbidden' });
-            }
-        }
-
-        // Find or create analytics document
-        let analytics = await Analytics.findOne({ liveClassId: classId });
-        if (!analytics) {
-            analytics = await Analytics.create({
-                institutionId: live.institutionId,
-                liveClassId: classId
-            });
-        }
-
-        // Find user's watch time entry or create new one
-        let userEntry = analytics.watchTimeByUser.find(
-            entry => String(entry.userId) === String(userId)
-        );
-
-        if (!userEntry) {
-            // First heartbeat from this user
-            analytics.watchTimeByUser.push({
-                userId,
-                watchTimeSeconds: durationNum,
-                lastHeartbeat: new Date()
-            });
-            analytics.uniqueViewers = analytics.watchTimeByUser.length;
-        } else {
-            // Update existing user entry
-            userEntry.watchTimeSeconds += durationNum;
-            userEntry.lastHeartbeat = new Date();
-        }
-
-        // Update total watch time
-        analytics.totalWatchTimeSeconds += durationNum;
-
-        // Recalculate average watch time
-        if (analytics.uniqueViewers > 0) {
-            analytics.avgWatchTimeSeconds = Math.round(
-                analytics.totalWatchTimeSeconds / analytics.uniqueViewers
-            );
-        }
-
-        analytics.lastUpdated = new Date();
-        await analytics.save();
-
-        // Get user's total watch time for response
-        const updatedUserEntry = analytics.watchTimeByUser.find(
-            entry => String(entry.userId) === String(userId)
-        );
-
-        return res.status(200).json({
-            ok: true,
-            totalWatchTime: updatedUserEntry?.watchTimeSeconds || 0
-        });
-    } catch (err) {
-        console.error('recordHeartbeat error:', err);
-        return res.status(500).json({ message: 'Failed to record heartbeat' });
     }
-}
 
-async function getClassWatchTimeStats(req, res) {
-    try {
-        const { classId } = req.params;
-
-        // Load LiveClass for institution scope check
-        const live = await LiveClass.findById(classId);
-        if (!live) {
-            return res.status(404).json({ message: 'LiveClass not found' });
-        }
-
-        // Scope check
-        if (req.user.role !== 'SuperAdmin') {
-            if (!req.user.institutionId || String(live.institutionId) !== String(req.user.institutionId)) {
-                return res.status(403).json({ message: 'Forbidden' });
-            }
-        }
-
-        const analytics = await Analytics.findOne({ liveClassId: classId })
-            .populate('watchTimeByUser.userId', 'name email');
-
-        if (!analytics) {
-            return res.status(200).json({
-                totalWatchTimeSeconds: 0,
-                avgWatchTimeSeconds: 0,
-                uniqueViewers: 0,
-                topViewers: []
-            });
-        }
-
-        // Sort by watch time descending and get top 10
-        const topViewers = analytics.watchTimeByUser
-            .map(entry => ({
-                userId: entry.userId?._id,
-                userName: entry.userId?.name || 'Unknown',
-                userEmail: entry.userId?.email,
-                watchTimeSeconds: entry.watchTimeSeconds,
-                lastHeartbeat: entry.lastHeartbeat
-            }))
-            .sort((a, b) => b.watchTimeSeconds - a.watchTimeSeconds)
-            .slice(0, 10);
-
-        return res.status(200).json({
-            totalWatchTimeSeconds: analytics.totalWatchTimeSeconds,
-            avgWatchTimeSeconds: analytics.avgWatchTimeSeconds,
-            uniqueViewers: analytics.uniqueViewers,
-            topViewers
-        });
-    } catch (err) {
-        console.error('getClassWatchTimeStats error:', err);
-        return res.status(500).json({ message: 'Failed to fetch watch time stats' });
+    let analytics = await Analytics.findOne({ liveClassId: classId });
+    if (!analytics) {
+        analytics = await Analytics.create({ institutionId: live.institutionId, liveClassId: classId });
     }
-}
 
-module.exports = { getLiveClassAnalytics, getTeacherStats, getAdminStats, recordHeartbeat, getClassWatchTimeStats };
+    let userEntry = analytics.watchTimeByUser.find(entry => String(entry.userId) === String(userId));
+
+    if (!userEntry) {
+        analytics.watchTimeByUser.push({ userId, watchTimeSeconds: durationNum, lastHeartbeat: new Date() });
+        analytics.uniqueViewers = analytics.watchTimeByUser.length;
+    } else {
+        userEntry.watchTimeSeconds += durationNum;
+        userEntry.lastHeartbeat = new Date();
+    }
+
+    analytics.totalWatchTimeSeconds += durationNum;
+    if (analytics.uniqueViewers > 0) {
+        analytics.avgWatchTimeSeconds = Math.round(analytics.totalWatchTimeSeconds / analytics.uniqueViewers);
+    }
+
+    analytics.lastUpdated = new Date();
+    await analytics.save();
+
+    const updatedUserEntry = analytics.watchTimeByUser.find(entry => String(entry.userId) === String(userId));
+
+    const { redis } = require('../../config/redis');
+    const activeKey = `live:active:${classId}`;
+    const userSessionKey = `session:${classId}:${userId}`;
+    
+    await redis.sadd(activeKey, userId);
+    await redis.setex(userSessionKey, 70, 'active'); 
+    
+    const activeCount = await redis.scard(activeKey);
+
+    return sendResponse(res, 200, {
+        totalWatchTime: updatedUserEntry?.watchTimeSeconds || 0,
+        activeViewers: activeCount
+    });
+});
+
+const getActiveViewerCount = catchAsync(async (req, res, next) => {
+    const { classId } = req.params;
+    const { redis } = require('../../config/redis');
+    const activeKey = `live:active:${classId}`;
+    const activeCount = await redis.scard(activeKey);
+    return sendResponse(res, 200, { activeViewers: activeCount });
+});
+
+const getClassWatchTimeStats = catchAsync(async (req, res, next) => {
+    const { classId } = req.params;
+
+    const live = await LiveClass.findById(classId);
+    if (!live) return next(new AppError('LiveClass not found', 404));
+
+    if (req.user.role !== 'SuperAdmin') {
+        if (!req.user.institutionId || String(live.institutionId) !== String(req.user.institutionId)) {
+            return next(new AppError('Forbidden', 403));
+        }
+    }
+
+    const analytics = await Analytics.findOne({ liveClassId: classId }).populate('watchTimeByUser.userId', 'name email');
+
+    if (!analytics) {
+        return sendResponse(res, 200, {
+            totalWatchTimeSeconds: 0,
+            avgWatchTimeSeconds: 0,
+            uniqueViewers: 0,
+            topViewers: []
+        });
+    }
+
+    const topViewers = analytics.watchTimeByUser
+        .map(entry => ({
+            userId: entry.userId?._id,
+            userName: entry.userId?.name || 'Unknown',
+            userEmail: entry.userId?.email,
+            watchTimeSeconds: entry.watchTimeSeconds,
+            lastHeartbeat: entry.lastHeartbeat
+        }))
+        .sort((a, b) => b.watchTimeSeconds - a.watchTimeSeconds)
+        .slice(0, 10);
+
+    return sendResponse(res, 200, {
+        totalWatchTimeSeconds: analytics.totalWatchTimeSeconds,
+        avgWatchTimeSeconds: analytics.avgWatchTimeSeconds,
+        uniqueViewers: analytics.uniqueViewers,
+        topViewers
+    });
+});
+
+module.exports = { 
+    getLiveClassAnalytics, 
+    getTeacherStats, 
+    getAdminStats, 
+    recordHeartbeat, 
+    getClassWatchTimeStats,
+    getActiveViewerCount
+};

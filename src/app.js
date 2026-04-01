@@ -11,9 +11,20 @@ const batchRoutes = require('./modules/batch/batch.routes');
 const commentRoutes = require('./modules/liveClass/comment.routes');
 const analyticsRoutes = require('./modules/analytics/analytics.routes');
 const reportRoutes = require('./modules/reports/report.routes');
+const notificationRoutes = require('./modules/notification/notification.routes');
+const watchHistoryRoutes = require('./modules/watchHistory/watchHistory.routes');
+const gamificationRoutes = require('./modules/gamification/gamification.routes');
 const securityMiddleware = require('./middleware/security');
 const { apiLimiter } = require('./middleware/rateLimiter');
+const bullBoardRouter = require('./realtime/bullboard');
 const { requestLogger } = require('./utils/logger');
+const AppError = require('./utils/AppError');
+const globalErrorHandler = require('./middleware/error');
+
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
+const { admin } = require('./config/env');
+const basicAuth = require('express-basic-auth');
 
 const app = express();
 
@@ -37,6 +48,27 @@ app.use(express.json({ limit: '1mb' }));
 // Apply rate limiting to all API routes
 app.use('/api', apiLimiter);
 
+// Background Jobs Dashboard (Protected)
+app.use(
+  '/admin/queues',
+  basicAuth({
+    users: { [admin.user]: admin.pass },
+    challenge: true,
+  }),
+  bullBoardRouter
+);
+
+// API Documentation (Protected)
+app.use(
+  '/api-docs',
+  basicAuth({
+    users: { [admin.user]: admin.pass },
+    challenge: true,
+  }),
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec)
+);
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/institutions', institutionRoutes);
@@ -49,6 +81,15 @@ app.use('/api/batches', batchRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/watch-history', watchHistoryRoutes);
+
+// FEATURE ENDPOINTS (v1)
+app.use('/api/v1/students', gamificationRoutes);
+app.use('/api/v1/batches', gamificationRoutes);
+app.use('/api/v1/live-classes', liveClassRoutes);
+
+
 
 // Health check route
 app.get('/health', (req, res) => {
@@ -59,5 +100,13 @@ app.get('/health', (req, res) => {
     env: process.env.NODE_ENV || 'development',
   });
 });
+
+// Handle undefined routes
+app.use((req, res, next) => {
+  next(new AppError(`Can't find ${req.originalUrl} on the ClassBridge server!`, 404));
+});
+
+// Global error handler (must be last)
+app.use(globalErrorHandler);
 
 module.exports = app;

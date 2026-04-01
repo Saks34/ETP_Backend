@@ -6,7 +6,8 @@ const {
     getTeacherStats,
     getAdminStats,
     recordHeartbeat,
-    getClassWatchTimeStats
+    getClassWatchTimeStats,
+    getActiveViewerCount
 } = require('./analytics.controller');
 
 router.get('/live-class/:id', auth, getLiveClassAnalytics);
@@ -15,6 +16,7 @@ router.get('/admin', auth, requireRoles('InstitutionAdmin', 'AcademicAdmin', 'Su
 
 // Watch time analytics
 router.post('/heartbeat', auth, requireRoles('Student'), recordHeartbeat);
+router.get('/live-class/:classId/active-viewers', auth, getActiveViewerCount);
 router.get('/watch-time/:classId', auth, requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'), getClassWatchTimeStats);
 
 module.exports = router;

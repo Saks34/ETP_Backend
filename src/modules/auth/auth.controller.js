@@ -1,5 +1,7 @@
 const { User } = require('./user.model');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('./token.service');
+const catchAsync = require('../../utils/catchAsync');
+const AppError = require('../../utils/AppError');
 
 function sanitizeUser(user) {
   // Handle batch - if it's populated it will be an object, otherwise it's an ObjectId
@@ -33,130 +35,118 @@ function sanitizeUser(user) {
   };
 }
 
-async function register(req, res) {
-  try {
-    const { name, email, password, role, institutionId } = req.body || {};
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: 'name, email and password are required' });
-    }
-
-    const user = await User.create({ name, email, password, role, institutionId });
-    const payload = {
-      sub: String(user._id),
-      role: user.role,
-      institutionId: user.institutionId ? String(user.institutionId) : null
-    };
-    const accessToken = signAccessToken(payload);
-    const refreshToken = signRefreshToken(payload);
-
-    return res.status(201).json({
-      user: sanitizeUser(user),
-      accessToken,
-      refreshToken,
-    });
-  } catch (err) {
-    if (err && err.code === 11000) {
-      return res.status(409).json({ message: 'Email already in use' });
-    }
-    return res.status(500).json({ message: 'Registration failed' });
+const register = catchAsync(async (req, res, next) => {
+  const { name, email, password, role, institutionId } = req.body || {};
+  if (!name || !email || !password) {
+    return next(new AppError('name, email and password are required', 400));
   }
-}
 
-async function login(req, res) {
-  try {
-    const { email, password } = req.body || {};
-    if (!email || !password) {
-      return res.status(400).json({ message: 'email and password are required' });
-    }
+  const user = await User.create({ name, email, password, role, institutionId });
+  const payload = {
+    sub: String(user._id),
+    role: user.role,
+    institutionId: user.institutionId ? String(user.institutionId) : null
+  };
+  const accessToken = signAccessToken(payload);
+  const refreshToken = signRefreshToken(payload);
 
-    const user = await User.findOne({ email }).populate('batchId', 'name');
-    if (!user) return res.status(401).json({ message: 'User not found' });
+  return res.status(201).json({
+    status: 'success',
+    user: sanitizeUser(user),
+    accessToken,
+    refreshToken,
+  });
+});
 
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
+const login = catchAsync(async (req, res, next) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return next(new AppError('email and password are required', 400));
+  }
 
-    // Check if user must change password
-    if (user.mustChangePassword) {
-      // Issue restricted token
-      const payload = { sub: String(user._id), role: 'PasswordChangePending' };
-      const accessToken = signAccessToken(payload);
-      return res.status(200).json({
-        message: 'Password change required',
-        mustChangePassword: true,
-        accessToken, // restricted token
-      });
-    }
+  const user = await User.findOne({ email }).populate('batchId', 'name');
+  if (!user) return next(new AppError('User not found', 401));
 
-    const payload = {
-      sub: String(user._id),
-      role: user.role,
-      institutionId: user.institutionId ? String(user.institutionId) : null
-    };
+  const isMatch = await user.comparePassword(password);
+  if (!isMatch) return next(new AppError('Invalid credentials', 401));
+
+  // Check if user must change password
+  if (user.mustChangePassword) {
+    // Issue restricted token
+    const payload = { sub: String(user._id), role: 'PasswordChangePending' };
     const accessToken = signAccessToken(payload);
-    const refreshToken = signRefreshToken(payload);
-
     return res.status(200).json({
-      user: sanitizeUser(user),
-      accessToken,
-      refreshToken,
+      status: 'success',
+      message: 'Password change required',
+      mustChangePassword: true,
+      accessToken, // restricted token
     });
-  } catch (err) {
-    return res.status(500).json({ message: 'Login failed' });
   }
-}
 
-async function refresh(req, res) {
-  try {
-    const { refreshToken } = req.body || {};
-    if (!refreshToken) return res.status(400).json({ message: 'refreshToken is required' });
+  const payload = {
+    sub: String(user._id),
+    role: user.role,
+    institutionId: user.institutionId ? String(user.institutionId) : null
+  };
+  const accessToken = signAccessToken(payload);
+  const refreshToken = signRefreshToken(payload);
 
-    const decoded = verifyRefreshToken(refreshToken);
-    const payload = {
-      sub: decoded.sub,
-      role: decoded.role,
-      institutionId: decoded.institutionId || null
-    };
-    const accessToken = signAccessToken(payload);
+  return res.status(200).json({
+    status: 'success',
+    user: sanitizeUser(user),
+    accessToken,
+    refreshToken,
+  });
+});
 
-    return res.status(200).json({ accessToken });
-  } catch (err) {
-    return res.status(401).json({ message: 'Invalid refresh token' });
+const refresh = catchAsync(async (req, res, next) => {
+  const { refreshToken } = req.body || {};
+  if (!refreshToken) return next(new AppError('refreshToken is required', 400));
+
+  const decoded = verifyRefreshToken(refreshToken);
+  const payload = {
+    sub: decoded.sub,
+    role: decoded.role,
+    institutionId: decoded.institutionId || null
+  };
+  const accessToken = signAccessToken(payload);
+
+  return res.status(200).json({
+    status: 'success',
+    accessToken,
+  });
+});
+
+const changePassword = catchAsync(async (req, res, next) => {
+  const { newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 6) {
+    return next(new AppError('New password must be at least 6 characters', 400));
   }
-}
 
-async function changePassword(req, res) {
-  try {
-    const { newPassword } = req.body || {};
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ message: 'New password must be at least 6 characters' });
-    }
+  const userId = req.user.sub;
+  const user = await User.findById(userId).populate('batchId', 'name');
+  if (!user) return next(new AppError('User not found', 404));
 
-    const userId = req.user.sub;
-    const user = await User.findById(userId).populate('batchId', 'name');
-    if (!user) return res.status(404).json({ message: 'User not found' });
+  user.password = newPassword; // Will be hashed by pre-save hook
+  user.mustChangePassword = false;
+  await user.save();
 
-    user.password = newPassword; // Will be hashed by pre-save hook
-    user.mustChangePassword = false;
-    await user.save();
+  // Issue new full tokens
+  const payload = {
+    sub: String(user._id),
+    role: user.role,
+    institutionId: user.institutionId ? String(user.institutionId) : null
+  };
+  const accessToken = signAccessToken(payload);
+  const refreshToken = signRefreshToken(payload);
 
-    // Issue new full tokens
-    const payload = {
-      sub: String(user._id),
-      role: user.role,
-      institutionId: user.institutionId ? String(user.institutionId) : null
-    };
-    const accessToken = signAccessToken(payload);
-    const refreshToken = signRefreshToken(payload);
-
-    return res.status(200).json({
-      message: 'Password changed successfully',
-      user: sanitizeUser(user),
-      accessToken,
-      refreshToken,
-    });
-  } catch (err) {
-    return res.status(500).json({ message: 'Failed to change password' });
-  }
-}
+  return res.status(200).json({
+    status: 'success',
+    message: 'Password changed successfully',
+    user: sanitizeUser(user),
+    accessToken,
+    refreshToken,
+  });
+});
 
 module.exports = { register, login, refresh, changePassword };

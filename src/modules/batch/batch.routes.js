@@ -1,6 +1,7 @@
 const express = require('express');
-const { createBatch, listBatches, getBatch, updateBatch, deleteBatch } = require('./batch.controller');
-const { auth, requireRoles } = require('../auth/auth.middleware');
+const { createBatch, listBatches, getBatch, updateBatch, deleteBatch, assignStudentsToBatch, getBatchAnalytics } = require('./batch.controller');
+const { auth, requireRoles, institutionGuard } = require('../auth/auth.middleware');
+const { validate, batchValidation } = require('../../middleware/validator');
 
 const router = express.Router();
 
@@ -8,6 +9,7 @@ const router = express.Router();
 router.get(
     '/',
     auth,
+    institutionGuard,
     requireRoles('InstitutionAdmin', 'AcademicAdmin', 'Teacher', 'Student', 'SuperAdmin'),
     listBatches
 );
@@ -16,6 +18,7 @@ router.get(
 router.get(
     '/:id',
     auth,
+    institutionGuard,
     requireRoles('InstitutionAdmin', 'AcademicAdmin', 'Teacher', 'Student', 'SuperAdmin'),
     getBatch
 );
@@ -24,14 +27,36 @@ router.get(
 router.post(
     '/',
     auth,
+    institutionGuard,
     requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+    validate(batchValidation.create),
     createBatch
+);
+
+// Assign students to batch
+router.post(
+    '/:id/assign-students',
+    auth,
+    institutionGuard,
+    requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+    validate(batchValidation.studentAssignment),
+    assignStudentsToBatch
+);
+
+// Get batch analytics
+router.get(
+    '/:id/analytics',
+    auth,
+    institutionGuard,
+    requireRoles('InstitutionAdmin', 'AcademicAdmin', 'Teacher', 'SuperAdmin'),
+    getBatchAnalytics
 );
 
 // Update batch
 router.patch(
     '/:id',
     auth,
+    institutionGuard,
     requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
     updateBatch
 );
@@ -40,6 +65,7 @@ router.patch(
 router.delete(
     '/:id',
     auth,
+    institutionGuard,
     requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
     deleteBatch
 );

@@ -5,7 +5,7 @@ const { User } = require('./src/modules/auth/user.model');
 
 async function debugApi() {
     try {
-        const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/teachflow';
+        const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/classbridge';
         await mongoose.connect(uri);
         console.log('Connected to Mongoose.');
         const student = await User.findOne({ email: 'thalualwohangunan@gmail.com' });

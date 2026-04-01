@@ -37,10 +37,10 @@ async function sendCredentialEmail({ to, tempPassword, loginUrl, from }) {
     }
 
     const transport = nodemailer.createTransport(getTransportOptions());
-    const sender = from || process.env.FROM_EMAIL || 'no-reply@etp.local';
-    const url = loginUrl || process.env.LOGIN_URL || 'https://app.etp.local/login';
+    const sender = from || process.env.FROM_EMAIL || 'no-reply@classbridge.local';
+    const url = loginUrl || process.env.LOGIN_URL || 'https://app.classbridge.local/login';
 
-    const subject = 'Your TeachFlow account credentials';
+    const subject = 'Your ClassBridge account credentials';
     const text = `Welcome!\n\nYou can login at: ${url}\nEmail: ${to}\nTemporary password: ${tempPassword}\n\nFor security, please change your password immediately after first login.`;
     const html = `
       <p>Welcome!</p>

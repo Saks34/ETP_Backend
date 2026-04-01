@@ -19,6 +19,18 @@ const UserSchema = new mongoose.Schema(
     institutionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Institution', required: false },
     batchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Batch', required: false },
     mustChangePassword: { type: Boolean, default: false },
+    
+    // Gamification
+    learningPoints: { type: Number, default: 0 },
+    badges: [{ 
+      name: { type: String, required: true }, 
+      awardedAt: { type: Date, default: Date.now } 
+    }],
+    stats: {
+      classCount: { type: Number, default: 0 },
+      pollCount: { type: Number, default: 0 },
+      vodCount: { type: Number, default: 0 }
+    }
   },
   { timestamps: true }
 );

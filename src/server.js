@@ -1,11 +1,11 @@
-require('dotenv').config();
+const { port } = require('./config/env');
 const http = require('http');
 const app = require('./app');
 const { connectDB, closeDB } = require('../config/db');
 const { connectMongo, closeMongo } = require('./database/mongo');
 const { initSocket } = require('./realtime/socket');
 
-const PORT = parseInt(process.env.PORT, 10) || 3000;
+const PORT = parseInt(port, 10) || 3000;
 let server;
 
 async function start() {

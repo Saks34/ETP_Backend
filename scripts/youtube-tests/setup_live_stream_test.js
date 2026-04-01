@@ -7,7 +7,7 @@ const { LiveClass } = require('./src/modules/timetable/liveclass.model');
 
 async function setup() {
     try {
-        const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/teachflow';
+        const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/classbridge';
         await mongoose.connect(uri);
         console.log('Connected to DB');
 

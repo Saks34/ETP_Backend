@@ -105,15 +105,7 @@ async function getStreamStatus(broadcastId) {
   return data.items?.[0]?.status;
 }
 
-module.exports = {
-  createLiveStream,
-  createLiveBroadcast,
-  bindBroadcastToStream,
-  // New: utilities for shutdown/cancellation flows
-  endLiveBroadcast,
-  setBroadcastPrivacy,
-  getStreamStatus, // 🔹 NEW
-};
+
 
 async function endLiveBroadcast(broadcastId) {
   console.log('[YouTube Service] 🛑 Ending live broadcast...', { broadcastId });
@@ -159,3 +151,64 @@ async function setBroadcastPrivacy(broadcastId, privacyStatus = 'private') {
   });
   return data;
 }
+
+/**
+ * Fetch auto-generated transcript (captions) for a video
+ * @param {string} videoId 
+ * @returns {Promise<string|null>}
+ */
+async function getVideoTranscript(videoId) {
+  console.log('[YouTube Service] 📜 Fetching transcript...', { videoId });
+  try {
+    const youtube = getYouTube();
+    
+    // 1. List available caption tracks
+    const { data: listData } = await youtube.captions.list({
+      part: 'id,snippet',
+      videoId
+    });
+    
+    if (!listData.items || listData.items.length === 0) {
+      console.warn('[YouTube Service] ⚠️ No captions found for video:', videoId);
+      return null;
+    }
+    
+    // Find auto-generated captions (ASR)
+    let captionTrack = listData.items.find(item => item.snippet.trackKind === 'ASR' || item.snippet.isAutoSynced);
+    if (!captionTrack) {
+      // Fallback to first available
+      captionTrack = listData.items[0];
+    }
+    
+    console.log('[YouTube Service] ⏬ Downloading captions...', { trackId: captionTrack.id });
+    
+    // 2. Download the caption track
+    const { data: transcript } = await youtube.captions.download({
+      id: captionTrack.id,
+      tfmt: 'srt'
+    });
+    
+    // Simple SRT to text conversion
+    const textOnly = transcript
+      .toString()
+      .replace(/\d+\r?\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}/g, '')
+      .replace(/\r?\n\d+\r?\n/g, '')
+      .replace(/\r?\n+/g, ' ')
+      .trim();
+      
+    return textOnly;
+  } catch (error) {
+    console.error('[YouTube Service] ❌ Failed to fetch transcript:', error.message);
+    throw error;
+  }
+}
+
+module.exports = {
+  createLiveStream,
+  createLiveBroadcast,
+  bindBroadcastToStream,
+  getStreamStatus,
+  endLiveBroadcast,
+  setBroadcastPrivacy,
+  getVideoTranscript
+};

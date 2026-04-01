@@ -546,4 +546,91 @@ async function updateStaff(req, res) {
   }
 }
 
-module.exports = { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, listStaff, deleteStaff, updateStaff };
+async function getInstitutionDashboard(req, res) {
+  try {
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ message: 'Unauthorized' });
+
+    let institutionId = null;
+    if (actor.role === 'SuperAdmin') {
+      institutionId = req.query.institutionId;
+      if (!institutionId) {
+        return res.status(400).json({ message: 'institutionId is required for SuperAdmin' });
+      }
+    } else {
+      institutionId = actor.institutionId;
+      if (!institutionId) return res.status(400).json({ message: 'Institution context required' });
+    }
+
+    const db = getDB();
+    const instId = new ObjectId(String(institutionId));
+
+    // 1. Basic counts
+    const [studentCount, teacherCount, batchCount] = await Promise.all([
+      db.collection(USERS).countDocuments({ institutionId: instId, role: 'Student' }),
+      db.collection(USERS).countDocuments({ institutionId: instId, role: 'Teacher' }),
+      db.collection('batches').countDocuments({ institutionId: instId })
+    ]);
+
+    // 2. Class and Resource Stats
+    const Collections = require('../../database/collections');
+    const classCount = await db.collection(Collections.CB_LIVE_CLASSES).countDocuments({ institutionId: instId });
+    const resourceCount = await db.collection(Collections.CB_NOTES).countDocuments({ institutionId: instId });
+
+    // 3. Overall Engagement (from Analytics)
+    const analytics = await db.collection('analytics').aggregate([
+      { $match: { institutionId: instId } },
+      {
+        $group: {
+          _id: null,
+          totalViews: { $sum: '$totalViews' },
+          totalUniqueViewers: { $sum: '$uniqueViewers' },
+          totalWatchTime: { $sum: '$totalWatchTimeSeconds' }
+        }
+      }
+    ]).toArray();
+
+    const stats = analytics[0] || { totalViews: 0, totalUniqueViewers: 0, totalWatchTime: 0 };
+
+    // 4. Poll Stats
+    const pollStats = await db.collection(Collections.CB_POLLS).aggregate([
+       { $match: { institutionId: instId } },
+       { $group: { _id: null, count: { $count: {} }, votes: { $sum: { $sum: '$results.count' } } } }
+    ]).toArray();
+
+    const polls = pollStats[0] || { count: 0, votes: 0 };
+
+    return res.status(200).json({
+       summary: {
+         students: studentCount,
+         teachers: teacherCount,
+         batches: batchCount,
+         classesHeld: classCount,
+         resourcesUploaded: resourceCount
+       },
+       engagement: {
+         totalViews: stats.totalViews,
+         uniqueViewers: stats.totalUniqueViewers,
+         totalWatchTimeMinutes: Math.round(stats.totalWatchTime / 60),
+         totalPolls: polls.count,
+         totalVotes: polls.votes
+       },
+       status: 'success'
+    });
+  } catch (err) {
+    console.error('getInstitutionDashboard error:', err);
+    return res.status(500).json({ message: 'Failed to fetch dashboard data' });
+  }
+}
+
+module.exports = {
+  registerInstitution,
+  addStaff,
+  updateUserRole,
+  bulkAddStaff,
+  downloadBulkExport,
+  listStaff,
+  deleteStaff,
+  updateStaff,
+  getInstitutionDashboard
+};

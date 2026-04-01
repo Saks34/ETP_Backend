@@ -1,12 +1,13 @@
 const express = require('express');
 const { register, login, refresh, changePassword } = require('./auth.controller');
 const { auth, requireRoles } = require('./auth.middleware');
+const { validate, authValidation } = require('../../middleware/validator');
 
 const router = express.Router();
 
 // Public routes
-router.post('/register', register);
-router.post('/login', login);
+router.post('/register', validate(authValidation.register), register);
+router.post('/login', validate(authValidation.login), login);
 router.post('/refresh', refresh);
 router.post('/change-password', auth, changePassword);
 

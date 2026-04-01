@@ -42,7 +42,7 @@ async function createNote(req, res) {
     // If provided, validate liveClass belongs to same institution
     if (liveClassId) {
       const db = getDB();
-      const live = await db.collection(Collections.TF_LIVE_CLASSES).findOne({ _id: new ObjectId(liveClassId) }, { projection: { institutionId: 1 } });
+      const live = await db.collection(Collections.CB_LIVE_CLASSES).findOne({ _id: new ObjectId(liveClassId) }, { projection: { institutionId: 1 } });
       if (!live) return res.status(404).json({ message: 'LiveClass not found' });
       if (String(live.institutionId) !== String(institutionId)) {
         return res.status(403).json({ message: 'Forbidden: cross-institution access' });
@@ -85,8 +85,17 @@ async function createNote(req, res) {
       payload.resourceType = resourceType;
     }
     const db = getDB();
-    const { insertedId } = await db.collection(Collections.TF_NOTES).insertOne(payload);
-    const note = await db.collection(Collections.TF_NOTES).findOne({ _id: insertedId });
+    const { insertedId } = await db.collection(Collections.CB_NOTES).insertOne(payload);
+    const note = await db.collection(Collections.CB_NOTES).findOne({ _id: insertedId });
+
+    // FEATURE 4: Notify students of new notes
+    try {
+      const { notifyStudentsNewNotes } = require('../notification/notification.service');
+      await notifyStudentsNewNotes(batchId, institutionId, title);
+    } catch (notifErr) {
+      console.error('Failed to send notes notification:', notifErr);
+    }
+
     return res.status(201).json({ note });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to create note' });
@@ -125,7 +134,7 @@ async function listNotes(req, res) {
     if (liveClassId) filter.liveClassId = new ObjectId(liveClassId);
 
     const notes = await db
-      .collection(Collections.TF_NOTES)
+      .collection(Collections.CB_NOTES)
       .find(filter)
       .sort({ createdAt: -1 })
       .toArray();
@@ -151,12 +160,11 @@ async function listNotesByBatchStudent(req, res) {
     const { batchId } = req.query || {};
     if (!batchId) return res.status(400).json({ message: 'batchId is required' });
 
-    const db = getDB();
     const pipeline = [
       { $match: { institutionId: new ObjectId(institutionId), batchId } },
       {
         $lookup: {
-          from: Collections.TF_LIVE_CLASSES,
+          from: Collections.CB_LIVE_CLASSES,
           localField: 'liveClassId',
           foreignField: '_id',
           as: 'liveClass',
@@ -167,7 +175,7 @@ async function listNotesByBatchStudent(req, res) {
       { $project: { liveClass: 0 } },
     ];
 
-    const notes = await db.collection(Collections.TF_NOTES).aggregate(pipeline).toArray();
+    const notes = await db.collection(Collections.CB_NOTES).aggregate(pipeline).toArray();
     return res.status(200).json({ notes });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to fetch notes' });
@@ -187,12 +195,11 @@ async function listNotesBySubjectStudent(req, res) {
     const { batchId, subjectId } = req.query || {};
     if (!batchId || !subjectId) return res.status(400).json({ message: 'batchId and subjectId are required' });
 
-    const db = getDB();
     const pipeline = [
       { $match: { institutionId: new ObjectId(institutionId), batchId, subjectId } },
       {
         $lookup: {
-          from: Collections.TF_LIVE_CLASSES,
+          from: Collections.CB_LIVE_CLASSES,
           localField: 'liveClassId',
           foreignField: '_id',
           as: 'liveClass',
@@ -203,7 +210,7 @@ async function listNotesBySubjectStudent(req, res) {
       { $project: { liveClass: 0 } },
     ];
 
-    const notes = await db.collection(Collections.TF_NOTES).aggregate(pipeline).toArray();
+    const notes = await db.collection(Collections.CB_NOTES).aggregate(pipeline).toArray();
     return res.status(200).json({ notes });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to fetch notes' });
@@ -223,12 +230,11 @@ async function listNotesByClassStudent(req, res) {
     const { batchId, liveClassId } = req.query || {};
     if (!batchId || !liveClassId) return res.status(400).json({ message: 'batchId and liveClassId are required' });
 
-    const db = getDB();
     const pipeline = [
       { $match: { institutionId: new ObjectId(institutionId), batchId, liveClassId: new ObjectId(liveClassId) } },
       {
         $lookup: {
-          from: Collections.TF_LIVE_CLASSES,
+          from: Collections.CB_LIVE_CLASSES,
           localField: 'liveClassId',
           foreignField: '_id',
           as: 'liveClass',
@@ -239,7 +245,7 @@ async function listNotesByClassStudent(req, res) {
       { $project: { liveClass: 0 } },
     ];
 
-    const notes = await db.collection(Collections.TF_NOTES).aggregate(pipeline).toArray();
+    const notes = await db.collection(Collections.CB_NOTES).aggregate(pipeline).toArray();
     return res.status(200).json({ notes });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to fetch notes' });
@@ -261,7 +267,7 @@ async function deleteNote(req, res) {
     if (!id) return res.status(400).json({ message: 'id is required' });
 
     const db = getDB();
-    const note = await db.collection(Collections.TF_NOTES).findOne({ _id: new ObjectId(id) });
+    const note = await db.collection(Collections.CB_NOTES).findOne({ _id: new ObjectId(id) });
     if (!note) return res.status(404).json({ message: 'Note not found' });
     if (String(note.institutionId) !== String(institutionId)) {
       return res.status(403).json({ message: 'Forbidden' });
@@ -284,7 +290,7 @@ async function deleteNote(req, res) {
       }
     }
 
-    await db.collection(Collections.TF_NOTES).deleteOne({ _id: new ObjectId(id) });
+    await db.collection(Collections.CB_NOTES).deleteOne({ _id: new ObjectId(id) });
     return res.status(200).json({ ok: true });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to delete note' });

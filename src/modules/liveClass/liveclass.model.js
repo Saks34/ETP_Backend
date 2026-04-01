@@ -37,7 +37,18 @@ const LiveClassSchema = new mongoose.Schema(
         publishedAt: { type: Date },
         url: { type: String }
       }
-    ]
+    ],
+    summary: {
+      keyTakeaways: [String],
+      chapterSummaries: [String],
+      actionItems: [String],
+      generatedAt: Date,
+      status: { 
+        type: String, 
+        enum: ['pending', 'processing', 'completed', 'failed'], 
+        default: 'pending' 
+      }
+    }
   },
   { timestamps: true }
 );

@@ -1,4 +1,5 @@
 const { body, validationResult } = require('express-validator');
+const AppError = require('../utils/AppError');
 
 // Validation middleware
 const validate = (validations) => {
@@ -10,10 +11,8 @@ const validate = (validations) => {
             return next();
         }
 
-        return res.status(400).json({
-            message: 'Validation failed',
-            errors: errors.array()
-        });
+        const message = errors.array().map(err => `${err.path}: ${err.msg}`).join('. ');
+        return next(new AppError(message, 400));
     };
 };
 
@@ -56,9 +55,41 @@ const commentValidation = {
     ],
 };
 
+const liveClassValidation = {
+    schedule: [
+        body('startTime').optional().isISO8601().withMessage('Invalid start time format'),
+        body('title').optional().trim().isLength({ min: 3, max: 200 }).withMessage('Title must be 3-200 characters'),
+        body('description').optional().trim().isLength({ max: 1000 }).withMessage('Description must be less than 1000 characters'),
+    ],
+    moderation: [
+        body('allowChat').optional().isBoolean().withMessage('allowChat must be a boolean'),
+        body('allowQnA').optional().isBoolean().withMessage('allowQnA must be a boolean'),
+        body('slowMode').optional().isInt({ min: 0, max: 60 }).withMessage('slowMode must be between 0-60 seconds'),
+        body('moderationEnabled').optional().isBoolean().withMessage('moderationEnabled must be a boolean'),
+    ],
+    details: [
+        body('title').trim().notEmpty().withMessage('Title is required')
+            .isLength({ min: 3, max: 200 }).withMessage('Title must be 3-200 characters'),
+        body('description').optional().trim().isLength({ max: 1000 }).withMessage('Description must be less than 1000 characters'),
+    ],
+};
+
+const batchValidation = {
+    create: [
+        body('name').trim().notEmpty().withMessage('Batch name is required'),
+        body('academicYear').isString().withMessage('Valid academic year is required'),
+    ],
+    studentAssignment: [
+        body('studentIds').isArray({ min: 1 }).withMessage('studentIds must be a non-empty array'),
+        body('studentIds.*').isMongoId().withMessage('Invalid studentId provided'),
+    ],
+};
+
 module.exports = {
     validate,
     authValidation,
     timetableValidation,
     commentValidation,
+    liveClassValidation,
+    batchValidation,
 };

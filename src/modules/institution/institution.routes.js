@@ -1,8 +1,22 @@
 const express = require('express');
-const { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, listStaff, deleteStaff, updateStaff } = require('./institution.controller');
+const { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, listStaff, deleteStaff, updateStaff, getInstitutionDashboard } = require('./institution.controller');
 const { auth, requireRoles } = require('../auth/auth.middleware');
 
 const router = express.Router();
+
+/**
+ * @swagger
+ * /api/v1/institution/dashboard:
+ *   get:
+ *     summary: Get high-level institution dashboard stats
+ *     tags: [Institution]
+ */
+router.get(
+  '/dashboard',
+  auth,
+  requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  getInstitutionDashboard
+);
 
 // Public registration of an institution (bootstraps an InstitutionAdmin)
 router.post('/register', registerInstitution);

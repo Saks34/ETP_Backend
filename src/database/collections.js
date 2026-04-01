@@ -1,5 +1,5 @@
-// Centralized collection names for ETP platform
-// One database: etp_platform
+// Centralized collection names for ClassBridge platform
+// One database: classbridge_platform
 // Vertical-specific collections must include vertical context
 
 module.exports = {
@@ -7,11 +7,12 @@ module.exports = {
   USERS: 'users',
   INSTITUTIONS: 'institutions',
 
-  // TeachFlow vertical
-  TF_TIMETABLES: 'teachflow_timetables',
-  TF_LIVE_CLASSES: 'teachflow_live_classes',
-  TF_NOTES: 'teachflow_notes',
-  TF_CHATS: 'teachflow_chats',
-  TF_RESOURCES: 'teachflow_resources',
-  TF_LIVECLASS_STATES: 'teachflow_liveclass_states',
+  // ClassBridge vertical
+  CB_TIMETABLES: 'classbridge_timetables',
+  CB_LIVE_CLASSES: 'classbridge_live_classes',
+  CB_NOTES: 'classbridge_notes',
+  CB_CHATS: 'classbridge_chats',
+  CB_RESOURCES: 'classbridge_resources',
+  CB_LIVECLASS_STATES: 'classbridge_liveclass_states',
+  CB_POLLS: 'classbridge_polls',
 };
