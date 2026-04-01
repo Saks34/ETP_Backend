@@ -47,5 +47,6 @@ UserSchema.methods.comparePassword = async function comparePassword(candidate) {
 };
 
 const User = mongoose.model('User', UserSchema);
+User.roles = roles;
 
-module.exports = { User, roles };
+module.exports = User;

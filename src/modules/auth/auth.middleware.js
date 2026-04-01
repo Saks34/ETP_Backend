@@ -11,6 +11,7 @@ function auth(req, res, next) {
     req.user = decoded;
     return next();
   } catch (e) {
+    console.error('Auth verification failed:', e.name, e.message);
     return res.status(401).json({ message: 'Unauthorized' });
   }
 }
@@ -28,31 +29,39 @@ function requireRoles(...roles) {
  * Ensures the request is scoped to an institution and matches the user's access
  */
 function institutionGuard(req, res, next) {
-  // Guard: auth middleware must have run first
   if (!req.user) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
 
-  let institutionId = req.headers['x-institution-id'] || req.query.institutionId || req.body.institutionId;
+  let institutionId = req.headers['x-institution-id'] || req.query?.institutionId || req.body?.institutionId;
 
-  // For non-SuperAdmins, fallback to their own institutionId if not provided
+  // Clean up institutionId if provided
+  if (institutionId) {
+    institutionId = String(institutionId).trim();
+  }
+
+  // Fallback to user's own institution if not explicitly provided
   if (!institutionId && req.user.institutionId) {
     institutionId = String(req.user.institutionId);
   }
 
+  // Final check for non-SuperAdmins
   if (!institutionId && req.user.role !== 'SuperAdmin') {
     return res.status(400).json({ message: 'Institution ID is required' });
   }
 
-  // SuperAdmins can bypass or set context
+  // SuperAdmins bypass cross-institution checks but still set req.institutionId if available
   if (req.user.role === 'SuperAdmin') {
     req.institutionId = institutionId;
     return next();
   }
 
-  // Ensure user belongs to this institution
-  if (req.user.institutionId && String(req.user.institutionId) !== String(institutionId)) {
-    return res.status(403).json({ message: 'Forbidden: Cross-institution access denied' });
+  // For others, strictly enforce that they only access their own institution
+  if (req.user.institutionId && institutionId && String(req.user.institutionId) !== String(institutionId)) {
+    return res.status(403).json({ 
+      message: 'Forbidden: Cross-institution access denied',
+      debug: { userInst: req.user.institutionId, targetInst: institutionId } 
+    });
   }
 
   req.institutionId = institutionId;

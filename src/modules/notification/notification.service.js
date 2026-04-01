@@ -1,5 +1,5 @@
 const { Notification } = require('./notification.model');
-const { User } = require('../auth/user.model');
+const User = require('../auth/user.model');
 const { LiveClass } = require('../liveClass/liveclass.model');
 const { Timetable } = require('../timetable/timetable.model');
 const logger = require('../../utils/logger');

@@ -1,6 +1,6 @@
 const { Server } = require('socket.io');
 const { verifyAccessToken } = require('../modules/auth/token.service');
-const { User } = require('../modules/auth/user.model');
+const User = require('../modules/auth/user.model');
 const { LiveClass } = require('../modules/liveClass/liveclass.model');
 const { Timetable } = require('../modules/timetable/timetable.model');
 const { ChatMessage } = require('../modules/liveClass/chatMessage.model');

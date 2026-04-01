@@ -10,7 +10,7 @@ function getInstitutionContext(req) {
   const actor = req.user;
   if (!actor) throw new AppError('Unauthorized', 401);
   if (actor.role === 'SuperAdmin') {
-    const institutionId = req.body.institutionId || req.params.institutionId || req.query.institutionId;
+    const institutionId = req.body?.institutionId || req.params.institutionId || req.query.institutionId;
     if (!institutionId) throw new AppError('institutionId is required for SuperAdmin', 400);
     return { institutionId };
   }

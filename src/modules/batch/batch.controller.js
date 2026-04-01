@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const { ObjectId } = mongoose.Types;
-const { Batch } = require('./batch.model');
-const { User } = require('../auth/user.model');
+const Batch = require('./batch.model');
+const User = require('../auth/user.model');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
 const sendResponse = require('../../utils/response');
@@ -12,7 +12,7 @@ function getInstitutionContext(req) {
     if (!actor) throw new AppError('Unauthorized', 401);
 
     // Prefer context set by institutionGuard
-    const contextId = req.institutionId || req.body.institutionId || req.params.institutionId || req.query.institutionId;
+    let contextId = req.institutionId || req.body?.institutionId || req.params.institutionId || req.query.institutionId;
 
     if (actor.role === 'SuperAdmin') {
         if (!contextId) throw new AppError('institutionId is required for SuperAdmin', 400);
@@ -22,7 +22,7 @@ function getInstitutionContext(req) {
     // For other roles, use their own institutionId if not provided or to enforce isolation
     const institutionId = actor.institutionId || contextId;
     if (!institutionId) throw new AppError('Institution context required', 400);
-    return { institutionId };
+    return { institutionId: String(institutionId).trim() };
 }
 
 const createBatch = catchAsync(async (req, res, next) => {
@@ -51,8 +51,12 @@ const listBatches = catchAsync(async (req, res, next) => {
     }
 
     try {
-        // Use the imported models
-        const rawBatches = await Batch.find({ institutionId })
+        // Normalize to string then to ObjectId if valid, else keep as is (Mongoose will handle or fail)
+        const queryId = mongoose.Types.ObjectId.isValid(institutionId) 
+            ? new ObjectId(String(institutionId)) 
+            : institutionId;
+
+        const rawBatches = await Batch.find({ institutionId: queryId })
             .sort({ createdAt: -1 })
             .lean();
 

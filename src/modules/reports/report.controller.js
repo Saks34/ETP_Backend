@@ -1,6 +1,6 @@
 const { Report } = require('./report.model');
 const { LiveClass } = require('../liveClass/liveclass.model');
-const { User } = require('../auth/user.model');
+const User = require('../auth/user.model');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
 const sendResponse = require('../../utils/response');

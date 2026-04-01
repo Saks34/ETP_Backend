@@ -1,5 +1,5 @@
 const { Institution } = require('./institution.model');
-const { User } = require('../auth/user.model');
+const User = require('../auth/user.model');
 const { signAccessToken, signRefreshToken } = require('../auth/token.service');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
@@ -165,7 +165,7 @@ async function addStaff(req, res) {
     let institutionId = null;
     if (actor.role === 'SuperAdmin') {
       // SuperAdmin may specify institutionId in body
-      institutionId = req.body.institutionId;
+      institutionId = req.body?.institutionId;
       if (!institutionId) {
         return res.status(400).json({ message: 'institutionId is required for SuperAdmin' });
       }
@@ -505,7 +505,7 @@ async function deleteStaff(req, res) {
 async function updateStaff(req, res) {
   try {
     const { userId } = req.params;
-    const { name, role, batchId } = req.body;
+    const { name, role, batchId } = req.body || {};
     const { institutionId, role: actorRole } = req.user;
 
     // Verify the user exists and belongs to the same institution

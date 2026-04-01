@@ -1,13 +1,14 @@
 const jwt = require('jsonwebtoken');
+const { jwt: jwtConfig } = require('../../config/env');
 
 function getSecrets() {
-  const accessSecret = process.env.JWT_ACCESS_SECRET;
-  const refreshSecret = process.env.JWT_REFRESH_SECRET;
+  const accessSecret = jwtConfig.accessSecret;
+  const refreshSecret = jwtConfig.refreshSecret;
   if (!accessSecret || !refreshSecret) {
-    throw new Error('JWT secrets are not configured. Set JWT_ACCESS_SECRET and JWT_REFRESH_SECRET');
+    throw new Error('JWT secrets are not configured in environment or config/env.js');
   }
-  const accessExpiresIn = process.env.JWT_ACCESS_EXPIRES || '15m';
-  const refreshExpiresIn = process.env.JWT_REFRESH_EXPIRES || '7d';
+  const accessExpiresIn = jwtConfig.accessExpiration || '15m';
+  const refreshExpiresIn = jwtConfig.refreshExpiration || '7d';
   return { accessSecret, refreshSecret, accessExpiresIn, refreshExpiresIn };
 }
 

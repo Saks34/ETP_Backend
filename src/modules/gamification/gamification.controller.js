@@ -1,7 +1,7 @@
 const catchAsync = require('../../utils/catchAsync');
 const sendResponse = require('../../utils/response');
 const AppError = require('../../utils/AppError');
-const { User } = require('../auth/user.model');
+const User = require('../auth/user.model');
 const { WatchHistory } = require('../watchHistory/watchHistory.model');
 const { Timetable } = require('../timetable/timetable.model');
 const { LiveClass } = require('../liveClass/liveclass.model');

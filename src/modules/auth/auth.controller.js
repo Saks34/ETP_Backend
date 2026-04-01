@@ -1,4 +1,4 @@
-const { User } = require('./user.model');
+const User = require('./user.model');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('./token.service');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');

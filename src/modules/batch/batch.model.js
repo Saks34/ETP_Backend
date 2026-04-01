@@ -36,4 +36,4 @@ batchSchema.index({ institutionId: 1, name: 1 }, { unique: true });
 
 const Batch = mongoose.model('Batch', batchSchema);
 
-module.exports = { Batch };
+module.exports = Batch;

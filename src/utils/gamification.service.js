@@ -1,4 +1,4 @@
-const { User } = require('../modules/auth/user.model');
+const User = require('../modules/auth/user.model');
 const { logger } = require('./logger');
 const { redis } = require('../config/redis');
 

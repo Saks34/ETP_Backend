@@ -62,7 +62,8 @@ const handleJWTExpiredError = () => new (require('../utils/AppError'))('Your tok
  * Main error handling middleware.
  */
 module.exports = (err, req, res, next) => {
-  err.statusCode = err.statusCode || 500;
+  console.error('ERROR:', err);
+  err.statusCode = err.statusCode || err.status || 500;
   err.status = err.status || 'error';
 
   if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
