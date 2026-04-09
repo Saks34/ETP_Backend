@@ -15,6 +15,7 @@
   "license": "ISC",
   "dependencies": {
     "@bull-board/api": "^6.20.6",
+    "@bull-board/bullmq": "^6.20.6",
     "@bull-board/express": "^6.20.6",
     "@bull-board/ui": "^6.20.6",
     "@google/generative-ai": "^0.24.1",
