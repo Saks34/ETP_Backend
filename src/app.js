@@ -99,6 +99,9 @@ app.use('/api/v1/live-classes', liveClassRoutes);
 
 
 
+// Favicon handler to prevent 404 logs
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
 // Health check route
 app.get('/health', (req, res) => {
   res.status(200).json({
