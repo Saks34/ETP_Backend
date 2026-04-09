@@ -21,6 +21,7 @@ const bullBoardRouter = require('./realtime/bullboard');
 const { requestLogger } = require('./utils/logger');
 const AppError = require('./utils/AppError');
 const globalErrorHandler = require('./middleware/error');
+const dbMiddleware = require('./middleware/db');
 
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
@@ -28,9 +29,13 @@ const { admin } = require('./config/env');
 const basicAuth = require('express-basic-auth');
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Apply security middleware first
 app.use(securityMiddleware);
+
+// Ensure DB connection
+app.use(dbMiddleware);
 
 // Request logging
 app.use(requestLogger);
