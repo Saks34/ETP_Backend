@@ -1,12 +1,12 @@
 const mongoose = require('mongoose');
-const dns = require('dns');
+// const dns = require('dns');
 
-// Force use of Google DNS to resolve MongoDB SRV records if default DNS fails
-try {
-  dns.setServers(['8.8.8.8', '8.8.4.4']);
-} catch (e) {
-  console.warn('Could not set DNS servers, using system defaults.');
-}
+// // Force use of Google DNS to resolve MongoDB SRV records if default DNS fails
+// try {
+//   dns.setServers(['8.8.8.8', '8.8.4.4']);
+// } catch (e) {
+//   console.warn('Could not set DNS servers, using system defaults.');
+// }
 
 let isConnected = false;
 
