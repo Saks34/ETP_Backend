@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const { port } = require('./config/env');
 const http = require('http');
 const app = require('./app');

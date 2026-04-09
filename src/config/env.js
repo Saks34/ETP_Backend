@@ -22,7 +22,8 @@ module.exports = {
   mongoose: {
     url: process.env.MONGODB_URI,
     options: {
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+      serverSelectionTimeoutMS: 15000, // Increase to 15s for serverless cold starts
+      bufferCommands: false, // Disable buffering to fail fast on connection issues
     },
     dbName: process.env.DB_NAME || 'ClassBridge',
   },

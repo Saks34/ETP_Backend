@@ -1,12 +1,4 @@
 const mongoose = require('mongoose');
-// const dns = require('dns');
-
-// // Force use of Google DNS to resolve MongoDB SRV records if default DNS fails
-// try {
-//   dns.setServers(['8.8.8.8', '8.8.4.4']);
-// } catch (e) {
-//   console.warn('Could not set DNS servers, using system defaults.');
-// }
 
 let isConnected = false;
 
@@ -34,6 +26,9 @@ const connectDB = async () => {
     ...options,
     dbName,
     autoIndex: !isProd,
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
+    family: 4, // Force IPv4 to avoid resolution timeouts on some networks
   });
 
   return mongoose.connection;
