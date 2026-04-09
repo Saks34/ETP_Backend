@@ -14,6 +14,7 @@ const reportRoutes = require('./modules/reports/report.routes');
 const notificationRoutes = require('./modules/notification/notification.routes');
 const watchHistoryRoutes = require('./modules/watchHistory/watchHistory.routes');
 const gamificationRoutes = require('./modules/gamification/gamification.routes');
+const supportRoutes = require('./modules/support/support.routes');
 const securityMiddleware = require('./middleware/security');
 const { apiLimiter } = require('./middleware/rateLimiter');
 const bullBoardRouter = require('./realtime/bullboard');
@@ -69,12 +70,18 @@ app.use(
   swaggerUi.setup(swaggerSpec)
 );
 
+const attendanceRoutes = require('./modules/liveClass/attendance.routes');
+
+const assignmentRoutes = require('./modules/assignment/assignment.routes');
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/institutions', institutionRoutes);
 app.use('/api/timetables', timetableRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/live-classes', liveClassRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/assignments', assignmentRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/batches', batchRoutes);
@@ -83,6 +90,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/watch-history', watchHistoryRoutes);
+app.use('/api/support', supportRoutes);
 
 // FEATURE ENDPOINTS (v1)
 app.use('/api/v1/students', gamificationRoutes);

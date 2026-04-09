@@ -2,6 +2,7 @@ const { Leave } = require('./leave.model');
 const { Timetable } = require('../timetable/timetable.model');
 const { LiveClass } = require('../liveClass/liveclass.model');
 const { Institution } = require('../institution/institution.model');
+const Batch = require('../batch/batch.model');
 const { createNotification } = require('../notification/notification.service');
 const { endLiveBroadcast, setBroadcastPrivacy } = require('../liveClass/youtube.service');
 
@@ -96,12 +97,15 @@ async function applyLeave(req, res) {
       // Create in-app notifications for each affected slot's teacher
       for (const slotDoc of affectedSlots) {
         try {
+          const batchDoc = await Batch.findById(slotDoc.batch);
+          const batchName = batchDoc ? batchDoc.name : slotDoc.batch;
+
           await createNotification({
             institutionId,
             userId: slotDoc.teacher, // expecting teacher to be a user id string
             type: 'ClassCancelled',
             title: 'Class Cancelled',
-            message: `Your class ${slotDoc.subject} for ${slotDoc.batch} on ${slotDoc.day} at ${slotDoc.startTime}-${slotDoc.endTime} has been cancelled due to leave`,
+            message: `Your class ${slotDoc.subject} for ${batchName} on ${slotDoc.day} at ${slotDoc.startTime}-${slotDoc.endTime} has been cancelled due to leave`,
             data: {
               timetableId: String(slotDoc._id),
               liveClassId: slotDoc.liveClassId ? String(slotDoc.liveClassId) : undefined,

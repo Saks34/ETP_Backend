@@ -16,21 +16,31 @@ const { notifyStudentsNewPoll } = require('../modules/notification/notification.
 const geminiService = require('../services/gemini.service');
 const { z } = require('zod');
 const { POINTS } = require('../config/constants');
+const { moderationQueue } = require('../queues/moderation.queue');
+const { BAD_WORDS } = require('../config/moderation');
+
+// Basic profanity check
+function containsProfanity(text) {
+  const lower = text.toLowerCase();
+  return BAD_WORDS.some(word => lower.includes(word));
+}
 
 // Zod schemas for socket payloads (FIX 4)
 const joinRoomSchema = z.object({
   liveClassId: z.string().min(1),
-  userId: z.string().min(1)
+  userId: z.string().optional()
 });
 
 const sendMessageSchema = z.object({
   liveClassId: z.string().min(1),
-  message: z.string().min(1).max(500)
+  message: z.string().optional(),
+  text: z.string().optional()
 });
 
 const qaQuestionSchema = z.object({
   liveClassId: z.string().min(1),
-  question: z.string().min(1).max(1000)
+  question: z.string().optional(),
+  text: z.string().optional()
 });
 
 const submitPollAnswerSchema = z.object({
@@ -41,6 +51,30 @@ const submitPollAnswerSchema = z.object({
 const pushPollSchema = z.object({
   question: z.string().min(1),
   options: z.array(z.string().min(1)).length(4)
+});
+
+// New unified "interactive" (poll/quiz) schemas
+const interactiveKindSchema = z.enum(['poll', 'quiz']);
+
+const pushInteractiveSchema = z.object({
+  liveClassId: z.string().min(1),
+  kind: interactiveKindSchema,
+  question: z.string().min(1),
+  options: z.array(z.string().min(1)).min(2).max(6),
+  // Required for quizzes
+  correctOptionIndex: z.number().int().min(0).max(5).optional(),
+  durationSec: z.number().int().min(10).max(3600).optional()
+});
+
+const submitInteractiveAnswerSchema = z.object({
+  liveClassId: z.string().min(1),
+  interactiveId: z.string().min(1),
+  selectedOptionIndex: z.number().int().min(0).max(5)
+});
+
+const closeInteractiveSchema = z.object({
+  liveClassId: z.string().min(1),
+  interactiveId: z.string().min(1)
 });
 
 const closePollSchema = z.object({
@@ -54,8 +88,8 @@ const getPollSpeedSchema = z.object({
 });
 
 // FIX 7: Socket error wrapper
-const asyncSocket = (fn) => (socket, data, ack) => {
-  Promise.resolve(fn(socket, data, ack)).catch((err) => {
+const asyncSocket = (socket, fn) => (data, ack) => {
+  Promise.resolve(fn(data, ack)).catch((err) => {
     logger.error('Socket Error:', err);
     if (typeof ack === 'function') {
       ack({ ok: false, error: err.message });
@@ -166,9 +200,10 @@ function initSocket(server) {
     }
 
     // join-room: { liveClassId, userId } (FIX 4)
-    socket.on('join-room', asyncSocket(async (socket, payload, ack) => {
+    socket.on('join-room', asyncSocket(socket, async (payload, ack) => {
         const validated = joinRoomSchema.parse(payload);
-        const { liveClassId, userId } = validated;
+        const { liveClassId } = validated;
+        const userId = validated.userId || socket.data.user.id;
 
         const live = await LiveClass.findById(liveClassId);
         if (!live) throw new Error('LiveClass not found');
@@ -230,11 +265,13 @@ function initSocket(server) {
             liveClassId: live._id,
         }).sort({ ts: -1 }).limit(50).lean();
 
+        const { muted } = getRoomState(liveClassId);
         socket.emit('chat-history', {
             liveClassId: room,
             messages: msgs.reverse().filter(m => !m.isDeleted),
             chatPaused: !live.chatEnabled,
-            slowMode: live.moderation?.slowMode || 0
+            slowMode: live.moderation?.slowMode || 0,
+            isMuted: muted.has(String(userId))
         });
 
         // Send QA history
@@ -255,6 +292,16 @@ function initSocket(server) {
           liveClassId: room,
           questions: questions.reverse()
         });
+
+        // Send active poll/quiz if exists
+        try {
+          const activeInteractiveKey = `active_interactive:${room}`;
+          const activeInteractiveStr = await redis.get(activeInteractiveKey);
+          if (activeInteractiveStr) {
+            const activeInteractive = JSON.parse(activeInteractiveStr);
+            socket.emit('interactive:active', activeInteractive);
+          }
+        } catch (_) { }
 
         // Broadcast join
         liveNs.to(room).emit('user-joined', { userId, role, ts: Date.now() });
@@ -342,14 +389,16 @@ function initSocket(server) {
     });
 
     // send-message: { liveClassId, message } (FIX 4)
-    socket.on('send-message', asyncSocket(async (socket, payload, ack) => {
+    socket.on('send-message', asyncSocket(socket, async (payload, ack) => {
         // Priority 7: Rate Limit
         if (await isRateLimited(socket.data.user.id, 'chat_message', 5, 10)) {
            throw new Error('Rate limit exceeded');
         }
 
         const validated = sendMessageSchema.parse(payload);
-        const { liveClassId, message: text } = validated;
+        const { liveClassId } = validated;
+        const text = validated.message || validated.text;
+        if (!text) throw new Error('Message text is required');
 
         const live = await LiveClass.findById(liveClassId);
         if (!live) throw new Error('LiveClass not found');
@@ -387,6 +436,27 @@ function initSocket(server) {
         if (muted.has(String(userId))) throw new Error('Muted: cannot send messages');
 
         const senderName = await getUserName();
+
+        // Check profanity
+        if (containsProfanity(text)) {
+          // Send to moderation queue instead of broadcasting
+          const messageData = {
+            institutionId: instId,
+            liveClassId: String(live._id),
+            type: 'message',
+            text: text,
+            senderId: userId,
+            senderName,
+            role,
+            ts: new Date(),
+            isPinned: false,
+            moderated: false
+          };
+          await moderationQueue.add('review-message', messageData);
+          if (typeof ack === 'function') ack({ ok: true, msg: 'Message sent for review' });
+          return;
+        }
+
         const savedMsg = await ChatMessage.create({
             institutionId: instId,
             liveClassId: live._id,
@@ -396,7 +466,8 @@ function initSocket(server) {
             senderName,
             role,
             ts: new Date(),
-            isPinned: false
+            isPinned: false,
+            moderated: true
         });
 
         liveNs.to(String(liveClassId)).emit('message', {
@@ -407,7 +478,8 @@ function initSocket(server) {
           senderName,
           role,
           ts: savedMsg.ts,
-          isPinned: false
+          isPinned: false,
+          moderated: true
         });
 
         if (typeof ack === 'function') ack({ ok: true });
@@ -749,13 +821,15 @@ function initSocket(server) {
     });
 
     // qa:question: { liveClassId, question } (FIX 4)
-    socket.on('qa:question', asyncSocket(async (socket, payload, ack) => {
+    socket.on('qa:question', asyncSocket(socket, async (payload, ack) => {
         if (await isRateLimited(socket.data.user.id, 'qa_question', 3, 30)) {
            throw new Error('Rate limit: 3 questions per 30s');
         }
 
         const validated = qaQuestionSchema.parse(payload);
-        const { liveClassId, question: text } = validated;
+        const { liveClassId } = validated;
+        const text = validated.question || validated.text;
+        if (!text) throw new Error('Question text is required');
 
         const live = await LiveClass.findById(liveClassId);
         if (!live) throw new Error('LiveClass not found');
@@ -783,9 +857,11 @@ function initSocket(server) {
     }));
 
     // qa:ask-ai: { liveClassId, question } (FEATURE 1)
-    socket.on('qa:ask-ai', asyncSocket(async (socket, payload, ack) => {
+    socket.on('qa:ask-ai', asyncSocket(socket, async (payload, ack) => {
         const validated = qaQuestionSchema.parse(payload);
-        const { liveClassId, question } = validated;
+        const { liveClassId } = validated;
+        const question = validated.question || validated.text;
+        if (!question) throw new Error('Question text is required');
 
         // Rate limit
         if (await isRateLimited(socket.data.user.id, 'qa_ask_ai', 2, 60)) {
@@ -798,11 +874,16 @@ function initSocket(server) {
         // Context aggregation
         let context = "";
         if (live.summary && live.summary.status === 'completed') {
-            context = `Topic: ${live.topic}. Key Takeaways: ${live.summary.keyTakeaways.join(', ')}. Context: ${live.summary.chapterSummaries.join('. ')}`;
+            const keyTakeaways = Array.isArray(live.summary.keyTakeaways) ? live.summary.keyTakeaways.join(', ') : '';
+            const chapterContext = Array.isArray(live.summary.chapters)
+              ? live.summary.chapters.map(chapter => chapter?.content).filter(Boolean).join('. ')
+              : '';
+            const summaryTitle = live.summary.title || live.title || 'Live Class';
+            context = `Topic: ${summaryTitle}. Key Takeaways: ${keyTakeaways}. Context: ${chapterContext}`;
         }
         
         // Add last 30 chat messages as context
-        const recentChats = await ChatMessage.find({ liveClassId, type: 'text' })
+        const recentChats = await ChatMessage.find({ liveClassId, type: 'message' })
             .sort({ ts: -1 })
             .limit(30)
             .select('senderName text');
@@ -987,7 +1068,7 @@ function initSocket(server) {
 
     // FEATURE 2: Real-time Polls
     // push-poll: { question, options } (FIX 4)
-    socket.on('push-poll', asyncSocket(async (socket, payload, ack) => {
+    socket.on('push-poll', asyncSocket(socket, async (payload, ack) => {
         const validated = pushPollSchema.parse(payload);
         const { question, options } = validated;
 
@@ -1022,7 +1103,7 @@ function initSocket(server) {
     }));
 
     // submit-poll-answer: { pollId, selectedOption: 0-3 } (FIX 4)
-    socket.on('submit-poll-answer', asyncSocket(async (socket, payload, ack) => {
+    socket.on('submit-poll-answer', asyncSocket(socket, async (payload, ack) => {
         const validated = submitPollAnswerSchema.parse(payload);
         const { pollId, selectedOption } = validated;
 
@@ -1084,7 +1165,7 @@ function initSocket(server) {
     }));
 
     // get-poll-speed-leaderboard: { pollId, liveClassId }
-    socket.on('get-poll-speed-leaderboard', asyncSocket(async (socket, payload, ack) => {
+    socket.on('get-poll-speed-leaderboard', asyncSocket(socket, async (payload, ack) => {
         const validated = getPollSpeedSchema.parse(payload);
         const { pollId, liveClassId } = validated;
 
@@ -1119,7 +1200,7 @@ function initSocket(server) {
     }));
 
     // close-poll: { liveClassId, pollId }
-    socket.on('close-poll', asyncSocket(async (socket, payload, ack) => {
+    socket.on('close-poll', asyncSocket(socket, async (payload, ack) => {
         const validated = closePollSchema.parse(payload);
         const { liveClassId, pollId } = validated;
         if (!requireModerator(socket.data.user.role)) throw new Error('Forbidden');
@@ -1157,6 +1238,186 @@ function initSocket(server) {
         await redis.del(activePollKey);
 
         if (typeof ack === 'function') ack({ ok: true });
+    }));
+
+    // =========================================
+    // New: Polls + Quizzes (unified interactive)
+    // =========================================
+
+    socket.on('interactive:push', asyncSocket(socket, async (payload, ack) => {
+      const validated = pushInteractiveSchema.parse(payload);
+      const { liveClassId, kind, question, options, correctOptionIndex, durationSec } = validated;
+
+      if (!requireModerator(socket.data.user.role)) throw new Error('Forbidden');
+      await ensureModeratorScope(liveClassId);
+
+      if (kind === 'quiz') {
+        if (correctOptionIndex === undefined || correctOptionIndex === null) {
+          throw new Error('correctOptionIndex is required for quiz');
+        }
+        if (correctOptionIndex < 0 || correctOptionIndex >= options.length) {
+          throw new Error('correctOptionIndex out of range');
+        }
+      }
+
+      const room = String(liveClassId);
+      const interactiveId = `interactive:${kind}:${Date.now()}:${Math.floor(Math.random() * 1000)}`;
+      const pushedAt = Date.now();
+      const ttlSec = durationSec || 600;
+
+      const active = {
+        interactiveId,
+        liveClassId: room,
+        kind,
+        question,
+        options,
+        correctOptionIndex: kind === 'quiz' ? correctOptionIndex : undefined,
+        pushedAt,
+        expiresAt: pushedAt + ttlSec * 1000
+      };
+
+      await redis.set(`active_interactive:${room}`, JSON.stringify(active), 'EX', ttlSec);
+      await redis.set(`interactive:${interactiveId}:pushedAt`, String(pushedAt), 'EX', ttlSec);
+      await redis.del(`interactive:${interactiveId}:results`);
+      await redis.del(`interactive:${interactiveId}:rightWrong`);
+
+      liveNs.to(room).emit('interactive:new', active);
+      if (typeof ack === 'function') ack({ ok: true, interactiveId });
+    }));
+
+    socket.on('interactive:submit', asyncSocket(socket, async (payload, ack) => {
+      const validated = submitInteractiveAnswerSchema.parse(payload);
+      const { liveClassId, interactiveId, selectedOptionIndex } = validated;
+
+      const room = String(liveClassId);
+      const userId = String(socket.data.user.id);
+      const role = socket.data.user.role;
+
+      // Student must belong to the batch (same as poll logic)
+      if (role === 'Student') {
+        const live = await LiveClass.findById(liveClassId);
+        if (!live) throw new Error('LiveClass not found');
+        const timetable = await Timetable.findById(live.timetableId);
+        if (!timetable) throw new Error('Timetable not found');
+        const user = await User.findById(userId).select('batchId');
+        if (!user || String(timetable.batch) !== String(user.batchId)) {
+          throw new Error('Forbidden: not in this batch');
+        }
+      }
+
+      // Must match currently active interactive
+      const activeStr = await redis.get(`active_interactive:${room}`);
+      if (!activeStr) throw new Error('No active poll/quiz');
+      const active = JSON.parse(activeStr);
+      if (active.interactiveId !== interactiveId) throw new Error('Interactive ID mismatch');
+
+      if (selectedOptionIndex < 0 || selectedOptionIndex >= active.options.length) {
+        throw new Error('selectedOptionIndex out of range');
+      }
+
+      const voteKey = `interactive:${interactiveId}:voted:${userId}`;
+      const already = await redis.get(voteKey);
+      if (already) throw new Error('Already answered');
+      await redis.set(voteKey, '1', 'EX', 3600);
+
+      const resultsKey = `interactive:${interactiveId}:results`;
+      await redis.hincrby(resultsKey, String(selectedOptionIndex), 1);
+      await redis.expire(resultsKey, 3600);
+
+      // Quiz right/wrong stats
+      if (active.kind === 'quiz' && typeof active.correctOptionIndex === 'number') {
+        const rwKey = `interactive:${interactiveId}:rightWrong`;
+        const isRight = selectedOptionIndex === active.correctOptionIndex;
+        await redis.hincrby(rwKey, isRight ? 'right' : 'wrong', 1);
+        await redis.expire(rwKey, 3600);
+      }
+
+      // Participation calc: answered vs current viewers
+      const results = await redis.hgetall(resultsKey);
+      const optionCounts = active.options.map((_, idx) => ({
+        optionIndex: idx,
+        count: parseInt(results[String(idx)] || '0', 10)
+      }));
+      const answered = optionCounts.reduce((sum, o) => sum + (o.count || 0), 0);
+
+      const viewersStr = await redis.get(`liveclass:${room}:viewers`);
+      const viewers = parseInt(viewersStr || '0', 10);
+      const participationPct = viewers > 0 ? Math.round((answered / viewers) * 100) : 0;
+
+      let quizStats = undefined;
+      if (active.kind === 'quiz') {
+        const rw = await redis.hgetall(`interactive:${interactiveId}:rightWrong`);
+        const rightCount = parseInt(rw.right || '0', 10);
+        const wrongCount = parseInt(rw.wrong || '0', 10);
+        quizStats = { rightCount, wrongCount };
+      }
+
+      liveNs.to(room).emit('interactive:results', {
+        interactiveId,
+        liveClassId: room,
+        kind: active.kind,
+        optionCounts,
+        participation: { answered, viewers, percentage: participationPct },
+        quizStats,
+        correctOptionIndex: active.kind === 'quiz' ? active.correctOptionIndex : undefined
+      });
+
+      await awardPoints(userId, POINTS.POLL_ANSWER, 'interactive_answer');
+
+      if (typeof ack === 'function') ack({ ok: true });
+    }));
+
+    socket.on('interactive:close', asyncSocket(socket, async (payload, ack) => {
+      const validated = closeInteractiveSchema.parse(payload);
+      const { liveClassId, interactiveId } = validated;
+
+      if (!requireModerator(socket.data.user.role)) throw new Error('Forbidden');
+      await ensureModeratorScope(liveClassId);
+
+      const room = String(liveClassId);
+      const activeStr = await redis.get(`active_interactive:${room}`);
+      if (!activeStr) throw new Error('No active poll/quiz');
+      const active = JSON.parse(activeStr);
+      if (active.interactiveId !== interactiveId) throw new Error('Interactive ID mismatch');
+
+      const results = await redis.hgetall(`interactive:${interactiveId}:results`);
+      const optionCounts = active.options.map((_, idx) => ({
+        optionIndex: idx,
+        count: parseInt(results[String(idx)] || '0', 10)
+      }));
+
+      let quizStats = undefined;
+      if (active.kind === 'quiz') {
+        const rw = await redis.hgetall(`interactive:${interactiveId}:rightWrong`);
+        const rightCount = parseInt(rw.right || '0', 10);
+        const wrongCount = parseInt(rw.wrong || '0', 10);
+        quizStats = { rightCount, wrongCount };
+      }
+
+      liveNs.to(room).emit('interactive:closed', {
+        interactiveId,
+        liveClassId: room,
+        kind: active.kind,
+        optionCounts,
+        quizStats,
+        correctOptionIndex: active.kind === 'quiz' ? active.correctOptionIndex : undefined,
+        closedAt: Date.now()
+      });
+
+      // Persist to MongoDB using Poll model (extended)
+      await Poll.create({
+        liveClassId,
+        kind: active.kind,
+        question: active.question,
+        options: active.options,
+        correctOptionIndex: active.kind === 'quiz' ? active.correctOptionIndex : undefined,
+        results: optionCounts,
+        quizStats: quizStats || undefined,
+        closedAt: new Date()
+      });
+
+      await redis.del(`active_interactive:${room}`);
+      if (typeof ack === 'function') ack({ ok: true });
     }));
   });
 

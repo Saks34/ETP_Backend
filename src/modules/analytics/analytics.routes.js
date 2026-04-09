@@ -5,6 +5,7 @@ const {
     getLiveClassAnalytics,
     getTeacherStats,
     getAdminStats,
+    getStudentStats,
     recordHeartbeat,
     getClassWatchTimeStats,
     getActiveViewerCount
@@ -13,6 +14,7 @@ const {
 router.get('/live-class/:id', auth, getLiveClassAnalytics);
 router.get('/teacher', auth, requireRoles('Teacher'), getTeacherStats);
 router.get('/admin', auth, requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'), getAdminStats);
+router.get('/student', auth, requireRoles('Student'), getStudentStats);
 
 // Watch time analytics
 router.post('/heartbeat', auth, requireRoles('Student'), recordHeartbeat);

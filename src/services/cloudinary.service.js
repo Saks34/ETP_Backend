@@ -42,4 +42,4 @@ async function deleteByPublicId(publicId, resourceType = 'image') {
   return res;
 }
 
-module.exports = { uploadBuffer, deleteByPublicId };
+module.exports = { cloudinary, uploadBuffer, deleteByPublicId };

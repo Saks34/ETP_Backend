@@ -48,7 +48,7 @@ async function createLiveStream({ title }) {
     });
     return data; // includes id and cdn.ingestionInfo
   } catch (error) {
-    console.error('[YouTube Service] ❌ Failed to create live stream:', error.message);
+    console.error('[YouTube Service] ❌ Failed to create live stream:', error.response?.data || error.message);
     throw error;
   }
 }
@@ -72,7 +72,7 @@ async function createLiveBroadcast({ title, scheduledStartTime }) {
     });
     return data;
   } catch (error) {
-    console.error('[YouTube Service] ❌ Failed to create live broadcast:', error.message);
+    console.error('[YouTube Service] ❌ Failed to create live broadcast:', error.response?.data || error.message);
     throw error;
   }
 }
@@ -89,7 +89,7 @@ async function bindBroadcastToStream({ broadcastId, streamId }) {
     console.log('[YouTube Service] ✅ Broadcast bound to stream successfully');
     return data;
   } catch (error) {
-    console.error('[YouTube Service] ❌ Failed to bind broadcast to stream:', error.message);
+    console.error('[YouTube Service] ❌ Failed to bind broadcast to stream:', error.response?.data || error.message);
     throw error;
   }
 }

@@ -239,6 +239,64 @@ const getBatchAnalytics = catchAsync(async (req, res, next) => {
     });
 });
 
+const bulkAddBatches = catchAsync(async (req, res, next) => {
+    const { institutionId } = getInstitutionContext(req);
+    const { batches } = req.body || {};
+
+    if (!Array.isArray(batches) || batches.length === 0) {
+        return next(new AppError('batches array is required', 400));
+    }
+
+    const results = {
+        created: 0,
+        failed: 0,
+        errors: []
+    };
+
+    const batchDocs = batches.map(b => ({
+        institutionId: new ObjectId(String(institutionId)),
+        name: b.name?.trim(),
+        academicYear: b.academicYear,
+        subjects: b.subjects || [],
+        description: b.description,
+        studentCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date()
+    })).filter(b => b.name);
+
+    if (batchDocs.length === 0) {
+        return next(new AppError('No valid batches provided (name is required)', 400));
+    }
+
+    try {
+        const result = await Batch.insertMany(batchDocs, { ordered: false });
+        results.created = result.length;
+    } catch (err) {
+        results.created = err.insertedDocs?.length || 0;
+        results.failed = batchDocs.length - results.created;
+        if (err.writeErrors) {
+            results.errors = err.writeErrors.map(we => ({
+                index: we.index,
+                message: we.errmsg
+            }));
+        }
+    }
+
+    return sendResponse(res, 201, results, `Successfully processed ${batchDocs.length} batches`);
+});
+
+const downloadBatchSample = (req, res) => {
+    const headers = ['Name', 'AcademicYear', 'Subjects', 'Description'];
+    const sampleRow = ['Grade 10-A', '2024-25', 'Math, Science, English', 'Morning batch for Grade 10'];
+
+    const csvLines = [headers.join(','), sampleRow.join(',')];
+    const csv = csvLines.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="batches_sample.csv"');
+    return res.status(200).send(csv);
+};
+
 module.exports = {
     createBatch,
     listBatches,
@@ -246,5 +304,7 @@ module.exports = {
     updateBatch,
     deleteBatch,
     assignStudentsToBatch,
-    getBatchAnalytics
+    getBatchAnalytics,
+    bulkAddBatches,
+    downloadBatchSample
 };

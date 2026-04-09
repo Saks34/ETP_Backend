@@ -58,18 +58,19 @@ const commentValidation = {
 const liveClassValidation = {
     schedule: [
         body('startTime').optional().isISO8601().withMessage('Invalid start time format'),
-        body('title').optional().trim().isLength({ min: 3, max: 200 }).withMessage('Title must be 3-200 characters'),
+        body('title').optional({ checkFalsy: true }).trim().isLength({ min: 1, max: 200 }).withMessage('Title must be 1-200 characters'),
         body('description').optional().trim().isLength({ max: 1000 }).withMessage('Description must be less than 1000 characters'),
     ],
     moderation: [
-        body('allowChat').optional().isBoolean().withMessage('allowChat must be a boolean'),
-        body('allowQnA').optional().isBoolean().withMessage('allowQnA must be a boolean'),
         body('slowMode').optional().isInt({ min: 0, max: 60 }).withMessage('slowMode must be between 0-60 seconds'),
-        body('moderationEnabled').optional().isBoolean().withMessage('moderationEnabled must be a boolean'),
+        body('subscribersOnly').optional().isBoolean().withMessage('subscribersOnly must be a boolean'),
+        body('blockLinks').optional().isBoolean().withMessage('blockLinks must be a boolean'),
+        body('blockedWords').optional().isArray().withMessage('blockedWords must be an array'),
+        body('blockedWords.*').optional().isString().withMessage('Each blocked word must be a string'),
     ],
     details: [
         body('title').trim().notEmpty().withMessage('Title is required')
-            .isLength({ min: 3, max: 200 }).withMessage('Title must be 3-200 characters'),
+            .isLength({ min: 1, max: 200 }).withMessage('Title must be 1-200 characters'),
         body('description').optional().trim().isLength({ max: 1000 }).withMessage('Description must be less than 1000 characters'),
     ],
 };

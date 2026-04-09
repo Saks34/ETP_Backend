@@ -70,4 +70,22 @@ router.delete(
     deleteBatch
 );
 
+// Bulk add batches
+router.post(
+    '/bulk',
+    auth,
+    institutionGuard,
+    requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+    require('./batch.controller').bulkAddBatches
+);
+
+// Download batch sample
+router.get(
+    '/sample',
+    auth,
+    institutionGuard,
+    requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+    require('./batch.controller').downloadBatchSample
+);
+
 module.exports = router;

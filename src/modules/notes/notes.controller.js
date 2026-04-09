@@ -4,6 +4,8 @@ const { getDB, ObjectId } = require('../../database/mongo');
 const Collections = require('../../database/collections');
 const { deleteByPublicId } = require('../../services/cloudinary.service');
 
+const sendResponse = require('../../utils/response');
+
 function getInstitutionContext(req) {
   const actor = req.user;
   if (!actor) return { error: { code: 401, message: 'Unauthorized' } };
@@ -96,7 +98,7 @@ async function createNote(req, res) {
       console.error('Failed to send notes notification:', notifErr);
     }
 
-    return res.status(201).json({ note });
+    return sendResponse(res, 201, note);
   } catch (err) {
     return res.status(500).json({ message: 'Failed to create note' });
   }
@@ -175,9 +177,11 @@ async function listNotesByBatchStudent(req, res) {
       { $project: { liveClass: 0 } },
     ];
 
+    const db = getDB();
     const notes = await db.collection(Collections.CB_NOTES).aggregate(pipeline).toArray();
-    return res.status(200).json({ notes });
+    return sendResponse(res, 200, notes);
   } catch (err) {
+    console.error('listNotesByBatchStudent error:', err);
     return res.status(500).json({ message: 'Failed to fetch notes' });
   }
 }
@@ -210,9 +214,11 @@ async function listNotesBySubjectStudent(req, res) {
       { $project: { liveClass: 0 } },
     ];
 
+    const db = getDB();
     const notes = await db.collection(Collections.CB_NOTES).aggregate(pipeline).toArray();
-    return res.status(200).json({ notes });
+    return sendResponse(res, 200, notes);
   } catch (err) {
+    console.error('listNotesBySubjectStudent error:', err);
     return res.status(500).json({ message: 'Failed to fetch notes' });
   }
 }
@@ -245,9 +251,11 @@ async function listNotesByClassStudent(req, res) {
       { $project: { liveClass: 0 } },
     ];
 
+    const db = getDB();
     const notes = await db.collection(Collections.CB_NOTES).aggregate(pipeline).toArray();
-    return res.status(200).json({ notes });
+    return sendResponse(res, 200, notes);
   } catch (err) {
+    console.error('listNotesByClassStudent error:', err);
     return res.status(500).json({ message: 'Failed to fetch notes' });
   }
 }
@@ -291,7 +299,7 @@ async function deleteNote(req, res) {
     }
 
     await db.collection(Collections.CB_NOTES).deleteOne({ _id: new ObjectId(id) });
-    return res.status(200).json({ ok: true });
+    return sendResponse(res, 200, { ok: true });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to delete note' });
   }

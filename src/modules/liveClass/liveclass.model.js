@@ -10,6 +10,7 @@ const LiveClassSchema = new mongoose.Schema(
 
     // New fields for VOD and controls
     chatEnabled: { type: Boolean, default: true },
+    whiteboardUrl: { type: String },
     actualStartTime: { type: Date },
     actualEndTime: { type: Date },
 
@@ -39,15 +40,20 @@ const LiveClassSchema = new mongoose.Schema(
       }
     ],
     summary: {
-      keyTakeaways: [String],
-      chapterSummaries: [String],
-      actionItems: [String],
-      generatedAt: Date,
+      title: { type: String },
+      summary: { type: String },
+      keyTakeaways: [{ type: String }],
+      chapters: [{ title: String, start_time: String, content: String }],
+      studentQuestions: [{ question: String, answer: String }],
+      actionItems: [{ type: String }],
+      generatedAt: { type: Date },
       status: { 
         type: String, 
         enum: ['pending', 'processing', 'completed', 'failed'], 
         default: 'pending' 
-      }
+      },
+      audioUrl: { type: String },
+      transcript: { type: Object } // Store full transcript JSON with timestamps
     }
   },
   { timestamps: true }

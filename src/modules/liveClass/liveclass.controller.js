@@ -8,20 +8,107 @@ const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
 const sendResponse = require('../../utils/response');
 
+function getRequestUserId(req) {
+  return req?.user?.sub || req?.user?.id;
+}
+
+function ensureSummaryShape(live) {
+  if (!live.summary) {
+    live.summary = { status: 'pending' };
+  }
+
+  const chapters = Array.isArray(live.summary.chapters) ? live.summary.chapters : [];
+  const chapterSummaries = Array.isArray(live.summary.chapterSummaries) ? live.summary.chapterSummaries : [];
+
+  if (chapters.length === 0 && chapterSummaries.length > 0) {
+    live.summary.chapters = chapterSummaries.map((content, index) => ({
+      title: `Chapter ${index + 1}`,
+      start_time: '',
+      content
+    }));
+  }
+
+  if (!Array.isArray(live.summary.chapterSummaries)) {
+    live.summary.chapterSummaries = (live.summary.chapters || []).map(chapter =>
+      typeof chapter === 'string' ? chapter : chapter?.content
+    ).filter(Boolean);
+  }
+
+  return live.summary;
+}
+
+async function ensureLiveClassAccess(req, live, options = {}) {
+  if (!live) {
+    throw new AppError('LiveClass not found', 404);
+  }
+
+  if (req.user?.role !== 'SuperAdmin') {
+    if (!req.user?.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
+      throw new AppError('Forbidden: cross-institution access', 403);
+    }
+  }
+
+  const role = req.user?.role;
+  const currentUserId = getRequestUserId(req);
+
+  if (!role || role === 'SuperAdmin') {
+    return null;
+  }
+
+  const needsTimetable =
+    options.requireAssignedTeacher ||
+    (options.requireStudentBatch && role === 'Student');
+
+  if (!needsTimetable) {
+    return null;
+  }
+
+  const timetable = await Timetable.findById(live.timetableId).select('teacher batch');
+  if (!timetable) {
+    throw new AppError('Linked timetable not found', 404);
+  }
+
+  if (options.requireAssignedTeacher && role === 'Teacher' && String(timetable.teacher) !== String(currentUserId)) {
+    throw new AppError('Forbidden: not assigned teacher', 403);
+  }
+
+  if (options.requireStudentBatch && role === 'Student') {
+    const requestBatchId = req.user?.batchId || req.user?.batch?._id || req.user?.batch;
+    if (!requestBatchId || String(timetable.batch) !== String(requestBatchId)) {
+      throw new AppError('Forbidden: not enrolled in this batch', 403);
+    }
+  }
+
+  return timetable;
+}
+
+function appendRecordingIfMissing(live, broadcastId) {
+  if (!broadcastId) return;
+  if (!Array.isArray(live.recordings)) {
+    live.recordings = [];
+  }
+
+  const exists = live.recordings.some(recording => String(recording.youtubeVideoId) === String(broadcastId));
+  if (exists) return;
+
+  live.recordings.push({
+    youtubeVideoId: broadcastId,
+    title: 'Recorded Class',
+    url: `https://www.youtube.com/watch?v=${broadcastId}`,
+    publishedAt: new Date()
+  });
+}
+
 const scheduleLiveClass = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { title } = req.body || {};
+  const { title, startTime } = req.body || {};
 
   if (!id) return next(new AppError('liveClass id is required', 400));
 
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden: cross-institution access', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
 
   if (live.streamInfo && live.streamInfo.broadcastId) {
     return sendResponse(res, 200, {
@@ -37,18 +124,18 @@ const scheduleLiveClass = catchAsync(async (req, res, next) => {
     }, 'Stream already exists');
   }
 
-  const timetable = await Timetable.findById(live.timetableId);
+  const timetable = await Timetable.findById(live.timetableId).populate('batch', 'name');
   if (!timetable) return next(new AppError('Linked timetable not found', 404));
 
-  const streamTitle = live.title || title || `${timetable.subject} - ${timetable.batch} - ${timetable.day} ${timetable.startTime}`;
-  
+  const batchName = timetable.batch?.name || String(timetable.batch);
+  const streamTitle = live.title || title || `${timetable.subject} - ${batchName} - ${timetable.day} ${timetable.startTime}`;
+
   if (!live.title) {
     live.title = streamTitle;
     await live.save();
   }
 
-  const scheduledStartTime = new Date();
-  scheduledStartTime.setMinutes(scheduledStartTime.getMinutes() + 5);
+  const scheduledStartTime = startTime ? new Date(startTime) : new Date(Date.now() + 5 * 60 * 1000);
 
   const stream = await createLiveStream({ title: streamTitle });
   const broadcast = await createLiveBroadcast({
@@ -90,16 +177,12 @@ const getTeacherStreamKey = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden: cross-institution access', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live);
 
   const timetable = await Timetable.findById(live.timetableId);
   if (!timetable) return next(new AppError('Linked timetable not found', 404));
 
-  const isAssignedTeacher = req.user && req.user.role === 'Teacher' && String(timetable.teacher) === String(req.user.sub);
+  const isAssignedTeacher = req.user && req.user.role === 'Teacher' && String(timetable.teacher) === String(getRequestUserId(req));
   const isAllowedAdmin = req.user && ['InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'].includes(req.user.role);
 
   if (!isAssignedTeacher && !isAllowedAdmin) {
@@ -121,11 +204,10 @@ const getJoinLink = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden: cross-institution access', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, {
+    requireAssignedTeacher: true,
+    requireStudentBatch: true
+  });
 
   const liveUrl = live?.streamInfo?.liveUrl || (live?.streamInfo?.broadcastId ? `https://www.youtube.com/watch?v=${live.streamInfo.broadcastId}` : undefined);
   if (!liveUrl) return next(new AppError('Join link not available', 404));
@@ -145,11 +227,12 @@ const getLiveClass = catchAsync(async (req, res, next) => {
 
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden: cross-institution access', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, {
+    requireAssignedTeacher: true,
+    requireStudentBatch: true
+  });
+
+  ensureSummaryShape(live);
 
   const response = {
     _id: live._id,
@@ -163,9 +246,11 @@ const getLiveClass = catchAsync(async (req, res, next) => {
     startTime: live.timetableId?.startTime,
     endTime: live.timetableId?.endTime,
     youtubeUrl: live.streamInfo?.liveUrl,
+    whiteboardUrl: live.whiteboardUrl,
     recordings: live.recordings || [],
     analytics: live.analytics || {},
-    moderation: live.moderation || {}
+    moderation: live.moderation || {},
+    summary: live.summary || { status: 'pending' }
   };
 
   return sendResponse(res, 200, response);
@@ -174,7 +259,7 @@ const getLiveClass = catchAsync(async (req, res, next) => {
 const getOrCreateByTimetable = catchAsync(async (req, res, next) => {
   const { timetableId } = req.params;
   const timetable = await Timetable.findById(timetableId);
-  
+
   if (!timetable) return next(new AppError('Timetable not found', 404));
 
   if (req.user && req.user.role !== 'SuperAdmin') {
@@ -221,11 +306,7 @@ const endLiveClass = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden: cross-institution access', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
 
   if (live.status === 'Completed' || live.status === 'Cancelled') {
     return next(new AppError('Stream already ended', 400));
@@ -235,23 +316,15 @@ const endLiveClass = catchAsync(async (req, res, next) => {
   if (broadcastId) {
     try {
       await endLiveBroadcast(broadcastId);
-    } catch (e) {
-      // Log but don't fail, we still want to update our DB
-      console.error('Failed to end YouTube broadcast:', e.message);
+    } catch (error) {
+      console.error('[YouTube Service] ❌ Failed to end live broadcast:', error.response?.data || error.message);
+      throw error;
     }
   }
 
   live.status = 'Completed';
   live.actualEndTime = new Date();
-
-  if (broadcastId) {
-    live.recordings.push({
-      youtubeVideoId: broadcastId,
-      title: 'Recorded Class',
-      url: `https://www.youtube.com/watch?v=${broadcastId}`,
-      publishedAt: new Date()
-    });
-  }
+  appendRecordingIfMissing(live, broadcastId);
 
   await live.save();
 
@@ -273,11 +346,11 @@ const endLiveClass = catchAsync(async (req, res, next) => {
         type: 'summarize-class',
         data: { liveClassId: live._id, broadcastId }
       }, {
-        delay: 600000, // 10 minutes delay for YouTube processing
+        delay: 60 * 60 * 1000, // 60 minutes delay for YouTube processing
         attempts: 3,
         backoff: {
           type: 'fixed',
-          delay: 600000 // 10 minutes between retries
+          delay: 60 * 60 * 1000 // 60 minutes between retries
         }
       });
     }
@@ -308,12 +381,7 @@ const checkStreamStatus = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  // Scope check
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
 
   const broadcastId = live.streamInfo?.broadcastId;
   if (!broadcastId) {
@@ -355,14 +423,7 @@ const checkStreamStatus = catchAsync(async (req, res, next) => {
   } else if (ytStatus?.lifeCycleStatus === 'complete' && live.status !== 'Completed') {
     live.status = 'Completed';
     live.actualEndTime = new Date();
-    if (broadcastId) {
-      live.recordings.push({
-        youtubeVideoId: broadcastId,
-        title: 'Recorded Class',
-        url: `https://www.youtube.com/watch?v=${broadcastId}`,
-        publishedAt: new Date()
-      });
-    }
+    appendRecordingIfMissing(live, broadcastId);
     await live.save();
   }
 
@@ -381,12 +442,7 @@ const updateModeration = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  // Scope check
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
 
   if (slowMode !== undefined) live.moderation.slowMode = slowMode;
   if (subscribersOnly !== undefined) live.moderation.subscribersOnly = subscribersOnly;
@@ -403,12 +459,7 @@ const getModeration = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  // Scope check
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
 
   return sendResponse(res, 200, live.moderation || {});
 });
@@ -420,12 +471,7 @@ const updateAnalytics = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  // Scope check
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
 
   if (!live.analytics) live.analytics = {};
   if (peakViewers !== undefined) live.analytics.peakViewers = peakViewers;
@@ -444,12 +490,7 @@ const updateClassDetails = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  // Scope check
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    if (!req.user.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden', 403));
-    }
-  }
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
 
   if (title) live.title = title;
 
@@ -459,6 +500,13 @@ const updateClassDetails = catchAsync(async (req, res, next) => {
 
 const getLiveClassQuestions = catchAsync(async (req, res, next) => {
   const { id } = req.params;
+  const live = await LiveClass.findById(id);
+  if (!live) return next(new AppError('LiveClass not found', 404));
+  await ensureLiveClassAccess(req, live, {
+    requireAssignedTeacher: true,
+    requireStudentBatch: true
+  });
+
   const questions = await LiveClassQuestion.find({
     liveClassId: id,
     isDeleted: false
@@ -508,26 +556,18 @@ const getLiveClassSummary = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id).populate('timetableId');
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  // Institution check
-  if (req.user && req.user.role !== 'SuperAdmin') {
-    const userInstitution = req.user.institutionId;
-    if (!userInstitution || String(userInstitution) !== String(live.institutionId)) {
-      return next(new AppError('Forbidden: cross-institution access', 403));
-    }
+  await ensureLiveClassAccess(req, live, {
+    requireAssignedTeacher: true,
+    requireStudentBatch: true
+  });
+
+  const summary = ensureSummaryShape(live);
+
+  if (summary.status === 'completed') {
+    return sendResponse(res, 200, summary);
   }
 
-  // Enrollment check for students
-  if (req.user.role === 'Student') {
-    if (!live.timetableId || String(live.timetableId.batch) !== String(req.user.batchId)) {
-      return next(new AppError('Forbidden: not enrolled in this batch', 403));
-    }
-  }
-
-  if (live.summary && live.summary.status === 'completed') {
-    return sendResponse(res, 200, live.summary);
-  }
-
-  return sendResponse(res, 200, { status: live.summary?.status || 'pending' });
+  return sendResponse(res, 200, { status: summary.status || 'pending' });
 });
 
 // FIX 3: AI Summary Manual Re-trigger
@@ -537,9 +577,9 @@ const retrySummary = catchAsync(async (req, res, next) => {
   if (!live) return next(new AppError('LiveClass not found', 404));
 
   // Only accessible by the teacher who owns the class
-  const isOwner = req.user.role === 'Teacher' && String(live.timetableId.teacher) === String(req.user.sub || req.user.id);
+  const isOwner = req.user.role === 'Teacher' && String(live.timetableId.teacher) === String(getRequestUserId(req));
   const isAdmin = ['SuperAdmin', 'InstitutionAdmin', 'AcademicAdmin'].includes(req.user.role);
-  
+
   if (!isOwner && !isAdmin) {
     return next(new AppError('Only the assigned teacher can retry the summary', 403));
   }
@@ -555,6 +595,7 @@ const retrySummary = catchAsync(async (req, res, next) => {
   }
 
   // Reset summary status to pending
+  ensureSummaryShape(live);
   live.summary.status = 'pending';
   await live.save();
 
@@ -566,11 +607,148 @@ const retrySummary = catchAsync(async (req, res, next) => {
     attempts: 3,
     backoff: {
       type: 'fixed',
-      delay: 600000 
+      delay: 60 * 60 * 1000
     }
   });
 
   return sendResponse(res, 200, { status: 'pending' }, 'Summary retry initiated');
+});
+
+const getCompletedClasses = catchAsync(async (req, res, next) => {
+  const institutionId = req.user.institutionId;
+  const filter = {
+    institutionId,
+    status: 'Completed',
+    'recordings.0': { $exists: true }
+  };
+
+  const completedClasses = await LiveClass.find(filter)
+    .populate({
+      path: 'timetableId',
+      populate: [
+        { path: 'teacher', select: 'name' },
+        { path: 'batch' }
+      ]
+    })
+    .sort({ actualEndTime: -1 })
+    .lean();
+
+  // If teacher, filter by their own classes
+  let results = completedClasses;
+  if (req.user.role === 'Teacher') {
+    results = completedClasses.filter(c =>
+      c.timetableId && String(c.timetableId.teacher?._id || c.timetableId.teacher) === String(req.user.sub || req.user.id)
+    );
+  }
+
+  return sendResponse(res, 200, results);
+});
+
+const updateWhiteboardUrl = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { whiteboardUrl } = req.body;
+  const institutionId = req.user.institutionId;
+
+  const live = await LiveClass.findOne({ _id: id, institutionId }).populate('timetableId');
+  if (!live) return next(new AppError('Live Class not found', 404));
+
+  // Only the teacher can update the whiteboard
+  if (req.user.role === 'Teacher' && String(live.timetableId.teacher) !== String(getRequestUserId(req))) {
+    return next(new AppError('You are not authorized to update this class', 403));
+  }
+
+  live.whiteboardUrl = whiteboardUrl;
+  await live.save();
+
+  // Sync whiteboard URL via socket
+  try {
+    const io = getIO();
+    io.of('/live-classes').to(String(live._id)).emit('whiteboard-updated', { whiteboardUrl });
+  } catch (e) {
+    console.error('Whiteboard socket emit failed:', e);
+  }
+
+  return sendResponse(res, 200, live, 'Whiteboard URL updated successfully');
+});
+
+const { moderationQueue } = require('../../queues/moderation.queue');
+const { ChatMessage } = require('./chatMessage.model');
+
+const getModerationQueue = catchAsync(async (req, res, next) => {
+  const institutionId = req.user.institutionId;
+  const { liveClassId } = req.params;
+
+  // BullMQ: Get waiting jobs
+  const waiting = await moderationQueue.getJobs(['waiting']);
+
+  // Filter for this class and institution
+  const filtered = waiting.filter(j =>
+    String(j.data.liveClassId) === String(liveClassId) &&
+    String(j.data.institutionId) === String(institutionId)
+  ).map(j => ({
+    jobId: j.id,
+    ...j.data
+  }));
+
+  return sendResponse(res, 200, filtered);
+});
+
+const approveModerationMessage = catchAsync(async (req, res, next) => {
+  const { jobId } = req.params;
+  const job = await moderationQueue.getJob(jobId);
+  if (!job) return next(new AppError('Moderation job not found', 404));
+
+  const data = job.data;
+  const live = await LiveClass.findById(data.liveClassId);
+  if (!live) return next(new AppError('LiveClass not found', 404));
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
+
+  // Create message
+  const savedMsg = await ChatMessage.create({
+    institutionId: data.institutionId,
+    liveClassId: data.liveClassId,
+    type: 'message',
+    text: data.text,
+    senderId: data.senderId,
+    senderName: data.senderName,
+    role: data.role,
+    ts: new Date(),
+    isPinned: false,
+    moderated: true // Flagged as moderated
+  });
+
+  // Emit to room
+  const io = getIO();
+  io.of('/live-classes').to(String(data.liveClassId)).emit('message', {
+    id: savedMsg._id,
+    liveClassId: String(data.liveClassId),
+    text: savedMsg.text,
+    senderId: data.senderId,
+    senderName: data.senderName,
+    role: data.role,
+    ts: savedMsg.ts,
+    isPinned: false,
+    moderated: true
+  });
+
+  // Remove job from waiting
+  await job.moveToCompleted('approved', req.user.id);
+
+  return sendResponse(res, 200, null, 'Message approved and broadcasted');
+});
+
+const rejectModerationMessage = catchAsync(async (req, res, next) => {
+  const { jobId } = req.params;
+  const job = await moderationQueue.getJob(jobId);
+  if (!job) return next(new AppError('Moderation job not found', 404));
+
+  const live = await LiveClass.findById(job.data.liveClassId);
+  if (!live) return next(new AppError('LiveClass not found', 404));
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
+
+  await job.moveToFailed(new Error('Rejected by moderator'), req.user.id);
+
+  return sendResponse(res, 200, null, 'Message rejected');
 });
 
 module.exports = {
@@ -588,5 +766,10 @@ module.exports = {
   getLiveClassQuestions,
   getBatchRecordings,
   getLiveClassSummary,
-  retrySummary
+  retrySummary,
+  getCompletedClasses,
+  updateWhiteboardUrl,
+  getModerationQueue,
+  approveModerationMessage,
+  rejectModerationMessage
 };

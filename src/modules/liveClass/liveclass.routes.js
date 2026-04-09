@@ -1,5 +1,5 @@
 const express = require('express');
-const { scheduleLiveClass, getTeacherStreamKey, getJoinLink, getLiveClass, getOrCreateByTimetable, endLiveClass, checkStreamStatus, updateModeration, getModeration, updateAnalytics, updateClassDetails, getLiveClassQuestions, getBatchRecordings, getLiveClassSummary, retrySummary } = require('./liveclass.controller');
+const { scheduleLiveClass, getTeacherStreamKey, getJoinLink, getLiveClass, getOrCreateByTimetable, endLiveClass, checkStreamStatus, updateModeration, getModeration, updateAnalytics, updateClassDetails, getLiveClassQuestions, getBatchRecordings, getLiveClassSummary, retrySummary, getCompletedClasses, updateWhiteboardUrl, getModerationQueue, approveModerationMessage, rejectModerationMessage } = require('./liveclass.controller');
 const { auth, requireRoles, institutionGuard } = require('../auth/auth.middleware');
 const { validate, liveClassValidation } = require('../../middleware/validator');
 
@@ -27,6 +27,13 @@ router.get(
   '/batch/:batchId/recordings',
   requireRoles('Student', 'Teacher', 'Moderator', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   getBatchRecordings
+);
+
+// Get all completed classes for a teacher or institution
+router.get(
+  '/completed',
+  requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  getCompletedClasses
 );
 
 // Get Live Class by Timetable ID (Get or Create) - Teacher/Admin
@@ -112,6 +119,32 @@ router.post(
   '/:id/summary/retry',
   requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   retrySummary
+);
+
+// Update Whiteboard URL
+router.patch(
+  '/:id/whiteboard',
+  requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  updateWhiteboardUrl
+);
+
+// Moderation Queue endpoints
+router.get(
+  '/:liveClassId/moderation-queue',
+  requireRoles('Teacher', 'Moderator', 'InstitutionAdmin', 'SuperAdmin'),
+  getModerationQueue
+);
+
+router.post(
+  '/moderation-queue/:jobId/approve',
+  requireRoles('Teacher', 'Moderator', 'InstitutionAdmin', 'SuperAdmin'),
+  approveModerationMessage
+);
+
+router.post(
+  '/moderation-queue/:jobId/reject',
+  requireRoles('Teacher', 'Moderator', 'InstitutionAdmin', 'SuperAdmin'),
+  rejectModerationMessage
 );
 
 module.exports = router;

@@ -1,6 +1,7 @@
 const { Timetable } = require('./timetable.model');
 const { Institution } = require('../institution/institution.model');
 const { LiveClass } = require('../liveClass/liveclass.model');
+const Batch = require('../batch/batch.model');
 const { createNotification } = require('../notification/notification.service');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
@@ -124,8 +125,11 @@ const updateSlot = catchAsync(async (req, res, next) => {
   const teacherChanged = prev.teacher !== existing.teacher;
 
   if (timeChanged || teacherChanged) {
+    const batchDoc = await Batch.findById(existing.batch);
+    const batchName = batchDoc ? batchDoc.name : existing.batch;
+
     const title = 'Class Rescheduled';
-    const message = `Class ${existing.subject} for ${existing.batch} has been rescheduled to ${existing.day} ${existing.startTime}-${existing.endTime}`;
+    const message = `Class ${existing.subject} for ${batchName} has been rescheduled to ${existing.day} ${existing.startTime}-${existing.endTime}`;
 
     await createNotification({
       institutionId,
@@ -152,7 +156,7 @@ const updateSlot = catchAsync(async (req, res, next) => {
         userId: prev.teacher,
         type: 'ClassRescheduled',
         title: 'Class Reassignment',
-        message: `Your class ${existing.subject} for ${existing.batch} has been reassigned`,
+        message: `Your class ${existing.subject} for ${batchName} has been reassigned`,
         data: {
           timetableId: String(existing._id),
           previous: prev,
@@ -294,4 +298,106 @@ const listByBatch = catchAsync(async (req, res, next) => {
   return sendResponse(res, 200, { slots: enrichedSlots });
 });
 
-module.exports = { createSlot, updateSlot, deleteSlot, listAll, listByTeacher, listByBatch };
+const bulkAddTimetable = catchAsync(async (req, res, next) => {
+  const { institutionId } = getInstitutionContext(req);
+  const { slots } = req.body || {};
+
+  if (!Array.isArray(slots) || slots.length === 0) {
+    return next(new AppError('slots array is required', 400));
+  }
+
+  const results = {
+    created: 0,
+    failed: 0,
+    clashes: [],
+    errors: [],
+  };
+
+  const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  for (const s of slots) {
+    try {
+      const { day, startTime, endTime, subject, batch, teacher } = s;
+      if (!day || !startTime || !endTime || !subject || !batch || !teacher) {
+        results.failed++;
+        results.errors.push({ slot: s, reason: 'Missing required fields' });
+        continue;
+      }
+
+      if (!dayNames.includes(day)) {
+        results.failed++;
+        results.errors.push({ slot: s, reason: 'Invalid day' });
+        continue;
+      }
+
+      const temp = new Timetable({ institutionId, day, startTime, endTime, subject, batch, teacher });
+      await temp.validate(); // This calculates startMinutes and endMinutes
+
+      const clash = await Timetable.findOne(buildClashFilter({
+        institutionId,
+        day,
+        startMinutes: temp.startMinutes,
+        endMinutes: temp.endMinutes,
+        teacher,
+        batch,
+      }));
+
+      if (clash) {
+        results.failed++;
+        results.clashes.push({ slot: s, reason: 'Clash detected' });
+        continue;
+      }
+
+      const slot = await Timetable.create({
+        institutionId,
+        day,
+        startTime,
+        endTime,
+        subject,
+        batch,
+        teacher,
+        startMinutes: temp.startMinutes,
+        endMinutes: temp.endMinutes,
+      });
+
+      const live = await LiveClass.create({
+        institutionId,
+        timetableId: slot._id,
+        status: 'Scheduled',
+        streamInfo: {},
+      });
+
+      slot.liveClassId = live._id;
+      await slot.save();
+      results.created++;
+    } catch (err) {
+      results.failed++;
+      results.errors.push({ slot: s, reason: err.message });
+    }
+  }
+
+  return sendResponse(res, 201, results, `Successfully processed ${slots.length} slots`);
+});
+
+const downloadTimetableSample = (req, res) => {
+  const headers = ['Day', 'StartTime', 'EndTime', 'Subject', 'BatchId', 'TeacherId'];
+  const sampleRow = ['Monday', '09:00', '10:00', 'Mathematics', '65f... (Batch ID)', '65f... (Teacher ID)'];
+
+  const csvLines = [headers.join(','), sampleRow.join(',')];
+  const csv = csvLines.join('\n');
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="timetable_sample.csv"');
+  return res.status(200).send(csv);
+};
+
+module.exports = { 
+  createSlot, 
+  updateSlot, 
+  deleteSlot, 
+  listAll, 
+  listByTeacher, 
+  listByBatch,
+  bulkAddTimetable,
+  downloadTimetableSample
+};

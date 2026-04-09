@@ -54,4 +54,20 @@ router.delete(
   deleteSlot
 );
 
+// Bulk add timetable slots
+router.post(
+  '/bulk',
+  auth,
+  requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  require('./timetable.controller').bulkAddTimetable
+);
+
+// Download timetable sample
+router.get(
+  '/sample',
+  auth,
+  requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  require('./timetable.controller').downloadTimetableSample
+);
+
 module.exports = router;

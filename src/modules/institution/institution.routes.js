@@ -1,5 +1,5 @@
 const express = require('express');
-const { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, listStaff, deleteStaff, updateStaff, getInstitutionDashboard } = require('./institution.controller');
+const { registerInstitution, addStaff, updateUserRole, bulkAddStaff, downloadBulkExport, downloadUserSample, listStaff, deleteStaff, updateStaff, getInstitutionDashboard } = require('./institution.controller');
 const { auth, requireRoles } = require('../auth/auth.middleware');
 
 const router = express.Router();
@@ -65,7 +65,7 @@ router.delete(
 router.post(
   '/bulk-staff',
   auth,
-  requireRoles('InstitutionAdmin'),
+  requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   bulkAddStaff
 );
 
@@ -73,8 +73,16 @@ router.post(
 router.get(
   '/bulk-staff/export',
   auth,
-  requireRoles('InstitutionAdmin'),
+  requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   downloadBulkExport
+);
+
+// Sample template for bulk import (InstitutionAdmin, AcademicAdmin)
+router.get(
+  '/bulk-staff/sample',
+  auth,
+  requireRoles('InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  downloadUserSample
 );
 
 module.exports = router;

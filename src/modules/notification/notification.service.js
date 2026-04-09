@@ -2,7 +2,7 @@ const { Notification } = require('./notification.model');
 const User = require('../auth/user.model');
 const { LiveClass } = require('../liveClass/liveclass.model');
 const { Timetable } = require('../timetable/timetable.model');
-const logger = require('../../utils/logger');
+const { logger } = require('../../utils/logger');
 const axios = require('axios'); // For YouTube API metadata fetch (Priority 9)
 
 async function createNotification({ institutionId, userId, type, title, message, data = {} }) {

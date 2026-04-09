@@ -307,7 +307,8 @@ async function bulkAddStaff(req, res) {
       const name = u?.name;
       const email = String(u?.email || '').trim().toLowerCase();
       const role = u?.role;
-      if (!name || !email || !role || !['Teacher', 'Student'].includes(role)) {
+      const allowedRoles = ['Teacher', 'Student', 'Moderator', 'AcademicAdmin'];
+      if (!name || !email || !role || !allowedRoles.includes(role)) {
         results.push({ email: email || u?.email, status: 'failed', reason: 'invalid_input' });
         continue;
       }
@@ -408,6 +409,29 @@ async function downloadBulkExport(req, res) {
   } catch (err) {
     console.error('downloadBulkExport error:', err);
     return res.status(500).json({ message: 'Failed to download export' });
+  }
+}
+
+async function downloadUserSample(req, res) {
+  try {
+    const { role } = req.query || {};
+    let headers = ['Name', 'Email', 'Role'];
+    let sampleRow = ['John Doe', 'john@example.com', role || 'Student'];
+
+    if (role === 'Student') {
+      headers.push('BatchId (Optional)');
+      sampleRow.push('65f... (Batch ID from Batches list)');
+    }
+
+    const csvLines = [headers.join(','), sampleRow.join(',')];
+    const csv = csvLines.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${(role || 'User').toLowerCase()}_sample.csv"`);
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error('downloadUserSample error:', err);
+    return res.status(500).json({ message: 'Failed to download sample' });
   }
 }
 
@@ -594,28 +618,28 @@ async function getInstitutionDashboard(req, res) {
 
     // 4. Poll Stats
     const pollStats = await db.collection(Collections.CB_POLLS).aggregate([
-       { $match: { institutionId: instId } },
-       { $group: { _id: null, count: { $count: {} }, votes: { $sum: { $sum: '$results.count' } } } }
+      { $match: { institutionId: instId } },
+      { $group: { _id: null, count: { $count: {} }, votes: { $sum: { $sum: '$results.count' } } } }
     ]).toArray();
 
     const polls = pollStats[0] || { count: 0, votes: 0 };
 
     return res.status(200).json({
-       summary: {
-         students: studentCount,
-         teachers: teacherCount,
-         batches: batchCount,
-         classesHeld: classCount,
-         resourcesUploaded: resourceCount
-       },
-       engagement: {
-         totalViews: stats.totalViews,
-         uniqueViewers: stats.totalUniqueViewers,
-         totalWatchTimeMinutes: Math.round(stats.totalWatchTime / 60),
-         totalPolls: polls.count,
-         totalVotes: polls.votes
-       },
-       status: 'success'
+      summary: {
+        students: studentCount,
+        teachers: teacherCount,
+        batches: batchCount,
+        classesHeld: classCount,
+        resourcesUploaded: resourceCount
+      },
+      engagement: {
+        totalViews: stats.totalViews,
+        uniqueViewers: stats.totalUniqueViewers,
+        totalWatchTimeMinutes: Math.round(stats.totalWatchTime / 60),
+        totalPolls: polls.count,
+        totalVotes: polls.votes
+      },
+      status: 'success'
     });
   } catch (err) {
     console.error('getInstitutionDashboard error:', err);
@@ -629,6 +653,7 @@ module.exports = {
   updateUserRole,
   bulkAddStaff,
   downloadBulkExport,
+  downloadUserSample,
   listStaff,
   deleteStaff,
   updateStaff,

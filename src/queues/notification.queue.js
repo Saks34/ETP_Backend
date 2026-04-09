@@ -6,6 +6,8 @@ const youtubeService = require('../modules/liveClass/youtube.service');
 const geminiService = require('../services/gemini.service');
 const { LiveClass } = require('../modules/liveClass/liveclass.model');
 const { Attendance } = require('../modules/liveClass/attendance.model');
+const { ChatMessage } = require('../modules/liveClass/chatMessage.model');
+const { LiveClassQuestion } = require('../modules/liveClass/liveclassQuestion.model');
 const { awardPoints } = require('../utils/gamification.service');
 const { redis } = require('../config/redis');
 const { ATTENDANCE_THRESHOLD, POINTS } = require('../config/constants');
@@ -18,7 +20,7 @@ const notificationQueue = new Queue('notifications', {
 // Worker to process notification jobs
 const notificationWorker = new Worker('notifications', async (job) => {
   logger.info(`Processing notification job: ${job.id} | Type: ${job.name}`);
-  
+
   try {
     const { type, data } = job.data;
 
@@ -41,7 +43,7 @@ const notificationWorker = new Worker('notifications', async (job) => {
 
       case 'summarize-class':
         // FEATURE 1: AI Class Summarization
-        await processClassSummarization(data.liveClassId, data.broadcastId);
+        await processClassSummarization(job);
         break;
 
       case 'process-attendance':
@@ -69,25 +71,92 @@ notificationWorker.on('failed', (job, err) => {
   logger.error(`Notification job ${job.id} failed:`, err);
 });
 
-async function processClassSummarization(liveClassId, broadcastId) {
-  logger.info(`Generating summary for class ${liveClassId}...`);
+async function processClassSummarization(job) {
+  const { liveClassId, broadcastId } = job.data.data;
+  const retryCount = job.data.retryCount || 0;
+  const MAX_RETRIES = 5;
+  const RETRY_DELAY = 30 * 60 * 1000; // 30 minutes
+
+  logger.info(`Generating summary for class ${liveClassId} (Attempt ${retryCount+1}/6)...`);
+  
   try {
     const liveClass = await LiveClass.findById(liveClassId);
     if (!liveClass) return;
 
+    liveClass.summary = liveClass.summary || { status: 'pending' };
     liveClass.summary.status = 'processing';
     await liveClass.save();
 
-    const transcript = await youtubeService.getVideoTranscript(broadcastId);
-    if (!transcript) {
-      // If no transcript yet, throw error to trigger retry (BullMQ handles retry)
-      throw new Error(`Transcript not ready for video ${broadcastId}`);
+    // 1. Try to get YouTube Transcript
+    let transcript = '';
+    try {
+      transcript = await youtubeService.getVideoTranscript(broadcastId);
+    } catch (e) {
+      logger.warn(`YouTube transcript fetch attempt ${retryCount+1} failed: ${e.message}`);
     }
 
-    const summaryData = await geminiService.summarizeTranscript(transcript);
-    
+    // 2. Decide: Retry, Fallback, or Proceed?
+    if (!transcript && retryCount < MAX_RETRIES) {
+      logger.info(`Transcript not ready for ${broadcastId}. Re-scheduling in 30 mins (Retry ${retryCount+1}/${MAX_RETRIES})...`);
+      
+      // Add the job back to the queue with a delay
+      await notificationQueue.add('summarize-class', {
+        ...job.data,
+        retryCount: retryCount + 1
+      }, {
+        delay: RETRY_DELAY
+      });
+
+      // Mark current status as pending so UI shows it's still waiting
+      liveClass.summary.status = 'pending';
+      await liveClass.save();
+      return; // Finish current job successfully (it will be picked up by the new delayed job)
+    }
+
+    // If we reach here, we either have a transcript OR we hit max retries
+    if (!transcript) {
+      logger.warn(`Max retries reached for transcript ${broadcastId}. Falling back to Chat/Q&A data only.`);
+    }
+
+    // 3. Fetch Chat and Q&A as fallback/supplement
+    const [messages, questions] = await Promise.all([
+      ChatMessage.find({ liveClassId, type: 'message' }).sort({ ts: 1 }).lean(),
+      LiveClassQuestion.find({ liveClassId, isDeleted: false }).sort({ ts: 1 }).lean()
+    ]);
+
+    let enrichmentText = '';
+    if (messages.length > 0) {
+      enrichmentText += '\n\n--- LIVE CHAT HISTORY ---\n';
+      enrichmentText += messages.map(m => `[${m.role}] ${m.senderName}: ${m.text}`).join('\n');
+    }
+    if (questions.length > 0) {
+      enrichmentText += '\n\n--- Q&A SESSION ---\n';
+      enrichmentText += questions.map(q => `Question: ${q.text} (Asked by ${q.senderName})\nAnswer: ${q.answerText || 'Not answered'}`).join('\n');
+    }
+
+    // Combine or choose source
+    const context = transcript ? `${transcript}\n\nREINFORCED CONTEXT FROM CHAT:${enrichmentText}` : enrichmentText;
+
+    if (!context || context.trim().length < 50) {
+      logger.error(`No context found for class ${liveClassId} after ${retryCount} retries.`);
+      liveClass.summary.status = 'failed';
+      await liveClass.save();
+      return;
+    }
+
+    // 4. Summarize with Gemini
+    const summaryData = await geminiService.summarizeTranscript(context);
+    const chapterSummaries = Array.isArray(summaryData.chapterSummaries) ? summaryData.chapterSummaries : [];
+
     liveClass.summary = {
-      ...summaryData,
+      title: liveClass.title,
+      summary: chapterSummaries.join('\n\n'),
+      keyTakeaways: summaryData.keyTakeaways || [],
+      chapters: chapterSummaries.map((content, index) => ({
+        title: `Chapter ${index + 1}`,
+        start_time: '',
+        content
+      })),
       generatedAt: new Date(),
       status: 'completed'
     };
@@ -97,10 +166,11 @@ async function processClassSummarization(liveClassId, broadcastId) {
     logger.error(`Error in processClassSummarization for ${liveClassId}:`, error.message);
     const liveClass = await LiveClass.findById(liveClassId);
     if (liveClass) {
+      liveClass.summary = liveClass.summary || {};
       liveClass.summary.status = 'failed';
       await liveClass.save();
     }
-    throw error; // Let BullMQ retry
+    // We don't throw here to avoid BullMQ retrying the ALREADY re-added job
   }
 }
 
@@ -119,14 +189,14 @@ async function processAttendance(liveClassId) {
     const threshold = ATTENDANCE_THRESHOLD;
     const pattern = `attendance:${liveClassId}:*`;
     const keys = await redis.keys(pattern);
-    
+
     const records = [];
     for (const key of keys) {
       const studentId = key.split(':').pop();
       const studentDuration = parseInt(await redis.hget(key, 'totalDuration') || '0', 10);
       const percentage = (studentDuration / classDuration) * 100;
       const status = (studentDuration / classDuration) >= threshold ? 'present' : 'absent';
-      
+
       records.push({
         studentId,
         status,

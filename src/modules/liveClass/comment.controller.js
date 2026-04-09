@@ -1,5 +1,6 @@
 const { Comment } = require('./comment.model');
 const { LiveClass } = require('./liveclass.model');
+const { Timetable } = require('../timetable/timetable.model');
 
 async function addComment(req, res) {
     try {
@@ -68,11 +69,23 @@ async function deleteComment(req, res) {
         const comment = await Comment.findById(id);
         if (!comment) return res.status(404).json({ message: 'Comment not found' });
 
-        // Allow deletion if: User is author OR User is Teacher (of that inst) or Admin
-        const isAuthor = String(comment.user) === String(userId);
-        const isAdmin = ['InstitutionAdmin', 'SuperAdmin', 'AcademicAdmin', 'Moderator', 'Teacher'].includes(req.user.role);
+        const live = await LiveClass.findById(comment.liveClassId);
+        if (!live) return res.status(404).json({ message: 'LiveClass not found' });
 
-        if (!isAuthor && !isAdmin) {
+        if (req.user.role !== 'SuperAdmin' && String(live.institutionId) !== String(req.user.institutionId)) {
+            return res.status(403).json({ message: 'Forbidden' });
+        }
+
+        const isAuthor = String(comment.user) === String(userId);
+        const isAdmin = ['InstitutionAdmin', 'SuperAdmin', 'AcademicAdmin', 'Moderator'].includes(req.user.role);
+        let isAssignedTeacher = false;
+
+        if (req.user.role === 'Teacher') {
+            const timetable = await Timetable.findById(live.timetableId).select('teacher');
+            isAssignedTeacher = !!timetable && String(timetable.teacher) === String(userId);
+        }
+
+        if (!isAuthor && !isAdmin && !isAssignedTeacher) {
             return res.status(403).json({ message: 'Forbidden' });
         }
 

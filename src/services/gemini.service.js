@@ -2,17 +2,17 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
 /**
  * Summarize class transcript using Gemini
  * @param {string} transcript 
  * @returns {Promise<{keyTakeaways: string[], chapterSummaries: string[], actionItems: string[]}>}
  */
-async function summarizeTranscript(transcript) {
+async function summarizeTranscript(context) {
   try {
     const prompt = `
-      You are an expert educational assistant. Summarize this class transcript into:
+      You are an expert educational assistant. Summarize this class context (which may include transcripts, live chat history, and Q&A) into:
       - 5 Key Takeaways (bullet points)
       - 3 Chapter Summaries with timestamps if available
       - 3 Action Items or Questions for students to reflect on.
@@ -23,18 +23,18 @@ async function summarizeTranscript(transcript) {
       "chapterSummaries" (array of strings), 
       "actionItems" (array of strings).
       
-      Transcript:
-      ${transcript}
+      Class Context:
+      ${context}
     `;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
-    
+
     // Extract JSON from response (Gemini sometimes wraps it in markdown)
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Failed to parse Gemini response');
-    
+
     return JSON.parse(jsonMatch[0]);
   } catch (error) {
     logger.error('Gemini summarization error:', error);

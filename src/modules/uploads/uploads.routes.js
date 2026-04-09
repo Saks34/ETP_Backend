@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const { auth, requireRoles } = require('../auth/auth.middleware');
-const { uploadBuffer } = require('../../services/cloudinary.service');
+const { cloudinary, uploadBuffer } = require('../../services/cloudinary.service');
 
 const router = express.Router();
 
@@ -9,7 +9,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 
 async function handleUpload(req, res, folder) {
   try {
-    if (!cloudinary?.uploader || !cloudinary?.config()?.cloud_name) {
+    if (!cloudinary || !cloudinary.uploader) {
       console.error('[Upload] ❌ Cloudinary not configured');
       return res.status(503).json({ message: 'Storage service unavailable' });
     }
