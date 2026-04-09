@@ -1,7 +1,9 @@
+const mongoose = require('mongoose');
 const { Timetable } = require('./timetable.model');
 const { Institution } = require('../institution/institution.model');
 const { LiveClass } = require('../liveClass/liveclass.model');
 const Batch = require('../batch/batch.model');
+const User = require('../auth/user.model');
 const { createNotification } = require('../notification/notification.service');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
@@ -306,6 +308,15 @@ const bulkAddTimetable = catchAsync(async (req, res, next) => {
     return next(new AppError('slots array is required', 400));
   }
 
+  // Pre-fetch all batches and teachers for this institution to resolve IDs from names/emails
+  const [allBatches, allTeachers] = await Promise.all([
+    Batch.find({ institutionId }),
+    User.find({ institutionId, role: 'Teacher' })
+  ]);
+
+  const batchMap = new Map(allBatches.map(b => [b.name.toLowerCase().trim(), b._id]));
+  const teacherEmailMap = new Map(allTeachers.map(t => [t.email.toLowerCase().trim(), t._id]));
+
   const results = {
     created: 0,
     failed: 0,
@@ -317,10 +328,27 @@ const bulkAddTimetable = catchAsync(async (req, res, next) => {
 
   for (const s of slots) {
     try {
-      const { day, startTime, endTime, subject, batch, teacher } = s;
-      if (!day || !startTime || !endTime || !subject || !batch || !teacher) {
+      const { day, startTime, endTime, subject, batch: batchIn, teacher: teacherIn } = s;
+      
+      // Resolve Batch ID
+      let batchId = batchIn;
+      if (batchIn && !mongoose.Types.ObjectId.isValid(batchIn)) {
+        batchId = batchMap.get(batchIn.toString().toLowerCase().trim());
+      }
+      
+      // Resolve Teacher ID
+      let teacherId = teacherIn;
+      if (teacherIn && !mongoose.Types.ObjectId.isValid(teacherIn)) {
+        teacherId = teacherEmailMap.get(teacherIn.toString().toLowerCase().trim());
+      }
+
+      if (!day || !startTime || !endTime || !subject || !batchId || !teacherId) {
         results.failed++;
-        results.errors.push({ slot: s, reason: 'Missing required fields' });
+        let reason = 'Missing required fields';
+        if (batchIn && !batchId) reason = `Batch "${batchIn}" not found`;
+        else if (teacherIn && !teacherId) reason = `Teacher with email "${teacherIn}" not found`;
+        
+        results.errors.push({ slot: s, reason });
         continue;
       }
 
@@ -330,16 +358,16 @@ const bulkAddTimetable = catchAsync(async (req, res, next) => {
         continue;
       }
 
-      const temp = new Timetable({ institutionId, day, startTime, endTime, subject, batch, teacher });
-      await temp.validate(); // This calculates startMinutes and endMinutes
+      const temp = new Timetable({ institutionId, day, startTime, endTime, subject, batch: batchId, teacher: teacherId });
+      await temp.validate();
 
       const clash = await Timetable.findOne(buildClashFilter({
         institutionId,
         day,
         startMinutes: temp.startMinutes,
         endMinutes: temp.endMinutes,
-        teacher,
-        batch,
+        teacher: teacherId,
+        batch: batchId,
       }));
 
       if (clash) {
@@ -354,8 +382,8 @@ const bulkAddTimetable = catchAsync(async (req, res, next) => {
         startTime,
         endTime,
         subject,
-        batch,
-        teacher,
+        batch: batchId,
+        teacher: teacherId,
         startMinutes: temp.startMinutes,
         endMinutes: temp.endMinutes,
       });
@@ -380,8 +408,8 @@ const bulkAddTimetable = catchAsync(async (req, res, next) => {
 });
 
 const downloadTimetableSample = (req, res) => {
-  const headers = ['Day', 'StartTime', 'EndTime', 'Subject', 'BatchId', 'TeacherId'];
-  const sampleRow = ['Monday', '09:00', '10:00', 'Mathematics', '65f... (Batch ID)', '65f... (Teacher ID)'];
+  const headers = ['Day', 'StartTime', 'EndTime', 'Subject', 'BatchName', 'TeacherEmail'];
+  const sampleRow = ['Monday', '09:00', '10:00', 'Mathematics', 'Morning-Batch-A', 'teacher@example.com'];
 
   const csvLines = [headers.join(','), sampleRow.join(',')];
   const csv = csvLines.join('\n');

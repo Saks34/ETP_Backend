@@ -1,8 +1,10 @@
 const { Institution } = require('./institution.model');
 const User = require('../auth/user.model');
+const Batch = require('../batch/batch.model');
 const { signAccessToken, signRefreshToken } = require('../auth/token.service');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const { connectMongo, getDB, ObjectId } = require('../../database/mongo');
 const { INSTITUTIONS, USERS } = require('../../database/collections');
 const { sendCredentialEmail } = require('../../services/email.service');
@@ -297,6 +299,10 @@ async function bulkAddStaff(req, res) {
     const institutionId = actor.institutionId;
     if (!institutionId) return res.status(400).json({ message: 'Institution context required' });
 
+    // Pre-fetch batches for local resolution
+    const allBatches = await Batch.find({ institutionId });
+    const batchMap = new Map(allBatches.map(b => [b.name.toLowerCase().trim(), b._id]));
+
     await connectMongo();
     const db = getDB();
     const usersCol = db.collection(USERS);
@@ -307,6 +313,8 @@ async function bulkAddStaff(req, res) {
       const name = u?.name;
       const email = String(u?.email || '').trim().toLowerCase();
       const role = u?.role;
+      const batchIn = u?.batch;
+
       const allowedRoles = ['Teacher', 'Student', 'Moderator', 'AcademicAdmin'];
       if (!name || !email || !role || !allowedRoles.includes(role)) {
         results.push({ email: email || u?.email, status: 'failed', reason: 'invalid_input' });
@@ -318,6 +326,18 @@ async function bulkAddStaff(req, res) {
         results.push({ email, status: 'skipped', reason: 'conflict' });
         continue;
       }
+
+      // Resolve batch
+      let batchId = null;
+      if (batchIn) {
+        if (mongoose.Types.ObjectId.isValid(batchIn)) {
+          batchId = new ObjectId(String(batchIn));
+        } else {
+          const foundId = batchMap.get(batchIn.toString().toLowerCase().trim());
+          if (foundId) batchId = foundId;
+        }
+      }
+
       // generate temp password
       const tempPassword = crypto.randomBytes(12).toString('base64url');
       const rounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10', 10);
@@ -334,6 +354,10 @@ async function bulkAddStaff(req, res) {
         createdAt: now,
         updatedAt: now,
       };
+
+      if (batchId) {
+        doc.batchId = batchId;
+      }
 
       const ins = await usersCol.insertOne(doc);
 
@@ -419,8 +443,8 @@ async function downloadUserSample(req, res) {
     let sampleRow = ['John Doe', 'john@example.com', role || 'Student'];
 
     if (role === 'Student') {
-      headers.push('BatchId (Optional)');
-      sampleRow.push('65f... (Batch ID from Batches list)');
+      headers.push('BatchName');
+      sampleRow.push('Morning-Batch-A');
     }
 
     const csvLines = [headers.join(','), sampleRow.join(',')];
