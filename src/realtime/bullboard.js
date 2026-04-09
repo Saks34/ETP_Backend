@@ -1,5 +1,5 @@
 const { createBullBoard } = require('@bull-board/api');
-const { BullMQAdapter } = require('@bull-board/bullmq');
+const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
 const path = require('path');
 const basicAuth = require('express-basic-auth');
