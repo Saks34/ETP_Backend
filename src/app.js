@@ -99,6 +99,16 @@ app.use('/api/v1/live-classes', liveClassRoutes);
 
 
 
+// Welcome route
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'Welcome to the ClassBridge API',
+    version: '1.0.0',
+    documentation: '/api-docs',
+    status: '/health'
+  });
+});
+
 // Favicon handler to prevent 404 logs
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
