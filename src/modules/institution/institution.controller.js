@@ -1,0 +1,685 @@
+const { Institution } = require('./institution.model');
+const User = require('../auth/user.model');
+const Batch = require('../batch/batch.model');
+const { signAccessToken, signRefreshToken } = require('../auth/token.service');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const mongoose = require('mongoose');
+const { connectMongo, getDB, ObjectId } = require('../../database/mongo');
+const { INSTITUTIONS, USERS } = require('../../database/collections');
+const { sendCredentialEmail } = require('../../services/email.service');
+
+function sanitizeInstitution(inst) {
+  return {
+    id: inst._id,
+    name: inst.name,
+    type: inst.type || 'school',
+    logo: inst.logo || null,
+    status: inst.status,
+    createdAt: inst.createdAt,
+    updatedAt: inst.updatedAt,
+  };
+}
+
+// ephemeral export storage (in-memory, one-time)
+const _exportStore = new Map();
+function _putExport(token, payload, ttlMs = 10 * 60 * 1000) {
+  const expiresAt = Date.now() + ttlMs;
+  _exportStore.set(token, { ...payload, expiresAt });
+}
+function _takeExport(token) {
+  const data = _exportStore.get(token);
+  if (!data) return null;
+  _exportStore.delete(token);
+  return data;
+}
+function _cleanupExports() {
+  const now = Date.now();
+  for (const [k, v] of _exportStore.entries()) {
+    if (!v || v.expiresAt <= now) _exportStore.delete(k);
+  }
+}
+
+async function registerInstitution(req, res) {
+  try {
+    const { name, type, logo, admin } = req.body || {};
+    if (!name || !admin || !admin?.name || !admin?.email || !admin?.password) {
+      return res.status(400).json({ message: 'name and admin{name,email,password} are required' });
+    }
+
+    // Ensure native driver is connected
+    await connectMongo();
+    const db = getDB();
+    const institutionsCol = db.collection(INSTITUTIONS);
+    const usersCol = db.collection(USERS);
+
+    // Conflict checks
+    const [existingInst, existingUser] = await Promise.all([
+      institutionsCol.findOne({ name: name.trim() }),
+      usersCol.findOne({ email: admin.email.trim().toLowerCase() }),
+    ]);
+
+    if (existingInst) {
+      return res.status(409).json({ message: 'Institution or email already exists' });
+    }
+    if (existingUser) {
+      return res.status(409).json({ message: 'Institution or email already exists' });
+    }
+
+    const now = new Date();
+    const instDoc = {
+      name: name.trim(),
+      type: type || 'school',
+      logo: logo || null,
+      status: 'ACTIVE', // status set to ACTIVE
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const instResult = await institutionsCol.insertOne(instDoc);
+    const institutionId = instResult.insertedId;
+
+    // Hash password using bcryptjs
+    const rounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10', 10);
+    const salt = await bcrypt.genSalt(rounds);
+    const hashed = await bcrypt.hash(admin.password, salt);
+
+    const adminDoc = {
+      name: admin.name,
+      email: admin.email.trim().toLowerCase(),
+      password: hashed,
+      role: 'InstitutionAdmin',
+      institutionId: institutionId, // store as ObjectId
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const userResult = await usersCol.insertOne(adminDoc);
+
+    // Build response objects
+    const instResponse = sanitizeInstitution({ _id: institutionId, ...instDoc });
+    const adminResponse = {
+      id: userResult.insertedId,
+      name: adminDoc.name,
+      email: adminDoc.email,
+      role: adminDoc.role,
+      institutionId: adminDoc.institutionId,
+    };
+
+    const payload = { sub: String(userResult.insertedId), role: adminDoc.role, institutionId: String(institutionId) };
+    const accessToken = signAccessToken(payload);
+    const refreshToken = signRefreshToken(payload);
+
+    return res.status(201).json({
+      institution: instResponse,
+      admin: adminResponse,
+      accessToken,
+      refreshToken,
+    });
+  } catch (err) {
+    console.error('registerInstitution error:', err);
+    if (err && err.code === 11000) {
+      return res.status(409).json({ message: 'Institution or email already exists' });
+    }
+    if (err && err.message && /required/i.test(err.message)) {
+      return res.status(400).json({ message: 'Invalid input' });
+    }
+    return res.status(500).json({ message: 'Institution registration failed' });
+  }
+}
+
+function sanitizeUser(user) {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    institutionId: user.institutionId || null,
+    batchId: user.batchId || null,  // Include batch assignment
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+}
+
+const ALLOWED_STAFF_ROLES = ['Teacher', 'Moderator', 'AcademicAdmin', 'Student'];
+
+function canAssignRole(actorRole, targetRole) {
+  if (actorRole === 'SuperAdmin') return true;
+  if (actorRole === 'InstitutionAdmin') return ALLOWED_STAFF_ROLES.includes(targetRole);
+  if (actorRole === 'AcademicAdmin') return ['Teacher', 'Moderator'].includes(targetRole);
+  return false;
+}
+
+async function addStaff(req, res) {
+  try {
+    const { name, email, password, role, sendEmail } = req.body || {};
+    if (!name || !email || !role) {
+      return res.status(400).json({ message: 'name, email and role are required' });
+    }
+
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ message: 'Unauthorized' });
+
+    if (!canAssignRole(actor.role, role)) {
+      return res.status(403).json({ message: 'Forbidden: cannot assign this role' });
+    }
+
+    let institutionId = null;
+    if (actor.role === 'SuperAdmin') {
+      // SuperAdmin may specify institutionId in body
+      institutionId = req.body?.institutionId;
+      if (!institutionId) {
+        return res.status(400).json({ message: 'institutionId is required for SuperAdmin' });
+      }
+    } else {
+      institutionId = actor.institutionId;
+      if (!institutionId) return res.status(400).json({ message: 'Institution context required' });
+    }
+
+    const inst = await Institution.findById(institutionId);
+    if (!inst) return res.status(404).json({ message: 'Institution not found' });
+
+    // When InstitutionAdmin creates Teacher or Student: use native driver, auto-generate temp password
+    const isInstitutionAdminCreatingStudentOrTeacher =
+      actor.role === 'InstitutionAdmin' && (role === 'Teacher' || role === 'Student');
+
+    if (isInstitutionAdminCreatingStudentOrTeacher) {
+      await connectMongo();
+      const db = getDB();
+      const usersCol = db.collection(USERS);
+
+      // Generate a secure temporary password (not logged or returned)
+      const tempPassword = crypto.randomBytes(12).toString('base64url');
+      const rounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10', 10);
+      const salt = await bcrypt.genSalt(rounds);
+      const hashed = await bcrypt.hash(tempPassword, salt);
+
+      const now = new Date();
+      const doc = {
+        name,
+        email: String(email).trim().toLowerCase(),
+        password: hashed,
+        role,
+        institutionId: new ObjectId(String(institutionId)),
+        mustChangePassword: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // Add batch assignment if provided (for students primarily)
+      const { batchId } = req.body || {};
+      if (batchId) {
+        doc.batchId = new ObjectId(String(batchId));
+      }
+
+      // Check email conflict
+      const existing = await usersCol.findOne({ email: doc.email });
+      if (existing) {
+        return res.status(409).json({ message: 'Email already in use' });
+      }
+
+      const result = await usersCol.insertOne(doc);
+
+      // Expose internally only for email/export (not in response)
+      req.generatedCredentials = { email: doc.email, tempPassword };
+
+      // Optionally send email if requested; failure must not block
+      if (sendEmail === true || sendEmail === 'true') {
+        try {
+          await sendCredentialEmail({ to: doc.email, tempPassword });
+        } catch (e) {
+          // already safely logged inside service
+        }
+      }
+
+      return res.status(201).json({
+        user: sanitizeUser({ _id: result.insertedId, ...doc }),
+      });
+    }
+
+    // Default path: use existing Mongoose logic for other roles/actors
+    if (!password) {
+      return res.status(400).json({ message: 'password is required' });
+    }
+    const user = await User.create({ name, email, password, role, institutionId });
+    return res.status(201).json({ user: sanitizeUser(user) });
+  } catch (err) {
+    if (err && err.code === 11000) {
+      return res.status(409).json({ message: 'Email already in use' });
+    }
+    return res.status(500).json({ message: 'Failed to add staff' });
+  }
+}
+
+async function updateUserRole(req, res) {
+  try {
+    const { userId } = req.params;
+    const { role } = req.body || {};
+    if (!role) return res.status(400).json({ message: 'role is required' });
+
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ message: 'Unauthorized' });
+
+    if (!canAssignRole(actor.role, role)) {
+      return res.status(403).json({ message: 'Forbidden: cannot assign this role' });
+    }
+
+    const target = await User.findById(userId);
+    if (!target) return res.status(404).json({ message: 'User not found' });
+
+    // Prevent cross-institution access except for SuperAdmin
+    if (actor.role !== 'SuperAdmin') {
+      if (!actor.institutionId || String(target.institutionId) !== String(actor.institutionId)) {
+        return res.status(403).json({ message: 'Forbidden: cross-institution access' });
+      }
+    }
+
+    target.role = role;
+    await target.save();
+    return res.status(200).json({ user: sanitizeUser(target) });
+  } catch (err) {
+    return res.status(500).json({ message: 'Failed to update role' });
+  }
+}
+
+// Bulk staff creation for InstitutionAdmin with one-time CSV export
+async function bulkAddStaff(req, res) {
+  try {
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ message: 'Unauthorized' });
+    if (actor.role !== 'InstitutionAdmin') {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const { users, sendEmail } = req.body || {};
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(400).json({ message: 'users array is required' });
+    }
+
+    const institutionId = actor.institutionId;
+    if (!institutionId) return res.status(400).json({ message: 'Institution context required' });
+
+    // Pre-fetch batches for local resolution
+    const allBatches = await Batch.find({ institutionId });
+    const batchMap = new Map(allBatches.map(b => [b.name.toLowerCase().trim(), b._id]));
+
+    await connectMongo();
+    const db = getDB();
+    const usersCol = db.collection(USERS);
+
+    const now = new Date();
+    const results = [];
+    for (const u of users) {
+      const name = u?.name;
+      const email = String(u?.email || '').trim().toLowerCase();
+      const role = u?.role;
+      const batchIn = u?.batch;
+
+      const allowedRoles = ['Teacher', 'Student', 'Moderator', 'AcademicAdmin'];
+      if (!name || !email || !role || !allowedRoles.includes(role)) {
+        results.push({ email: email || u?.email, status: 'failed', reason: 'invalid_input' });
+        continue;
+      }
+      // conflict check
+      const existing = await usersCol.findOne({ email });
+      if (existing) {
+        results.push({ email, status: 'skipped', reason: 'conflict' });
+        continue;
+      }
+
+      // Resolve batch
+      let batchId = null;
+      if (batchIn) {
+        if (mongoose.Types.ObjectId.isValid(batchIn)) {
+          batchId = new ObjectId(String(batchIn));
+        } else {
+          const foundId = batchMap.get(batchIn.toString().toLowerCase().trim());
+          if (foundId) batchId = foundId;
+        }
+      }
+
+      // generate temp password
+      const tempPassword = crypto.randomBytes(12).toString('base64url');
+      const rounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10', 10);
+      const salt = await bcrypt.genSalt(rounds);
+      const hashed = await bcrypt.hash(tempPassword, salt);
+
+      const doc = {
+        name,
+        email,
+        password: hashed,
+        role,
+        institutionId: new ObjectId(String(institutionId)),
+        mustChangePassword: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (batchId) {
+        doc.batchId = batchId;
+      }
+
+      const ins = await usersCol.insertOne(doc);
+
+      // optional email send
+      if (sendEmail === true || sendEmail === 'true') {
+        try { await sendCredentialEmail({ to: email, tempPassword }); } catch (e) { }
+      }
+
+      results.push({
+        email,
+        name,
+        role,
+        userId: String(ins.insertedId),
+        tempPassword, // for export only
+        status: 'created',
+      });
+    }
+
+    // build one-time export token
+    const token = crypto.randomBytes(24).toString('base64url');
+    _cleanupExports();
+    _putExport(token, {
+      institutionId: String(institutionId),
+      actorId: String(actor._id || actor.id || ''),
+      rows: results
+        .filter((r) => r.status === 'created')
+        .map((r) => ({ name: r.name, email: r.email, role: r.role, tempPassword: r.tempPassword })),
+    });
+
+    return res.status(201).json({
+      created: results.filter((r) => r.status === 'created').length,
+      skipped: results.filter((r) => r.status === 'skipped').length,
+      failed: results.filter((r) => r.status === 'failed').length,
+      exportToken: token,
+    });
+  } catch (err) {
+    console.error('bulkAddStaff error:', err);
+    return res.status(500).json({ message: 'Failed to add staff in bulk' });
+  }
+}
+
+async function downloadBulkExport(req, res) {
+  try {
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ message: 'Unauthorized' });
+    if (actor.role !== 'InstitutionAdmin') return res.status(403).json({ message: 'Forbidden' });
+
+    const { token } = req.query || {};
+    if (!token) return res.status(400).json({ message: 'token is required' });
+
+    const data = _takeExport(token);
+    if (!data) return res.status(404).json({ message: 'Export not found or already downloaded' });
+
+    // Ensure same institution
+    if (String(actor.institutionId) !== String(data.institutionId)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const rows = data.rows || [];
+    const header = ['Name', 'Email', 'Role', 'Temporary Password'];
+    const csvLines = [header.join(',')];
+    for (const r of rows) {
+      const line = [r.name, r.email, r.role, r.tempPassword]
+        .map((v) => '"' + String(v ?? '').replace(/"/g, '""') + '"')
+        .join(',');
+      csvLines.push(line);
+    }
+    const csv = csvLines.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="users_export.csv"');
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error('downloadBulkExport error:', err);
+    return res.status(500).json({ message: 'Failed to download export' });
+  }
+}
+
+async function downloadUserSample(req, res) {
+  try {
+    const { role } = req.query || {};
+    let headers = ['Name', 'Email', 'Role'];
+    let sampleRow = ['John Doe', 'john@example.com', role || 'Student'];
+
+    if (role === 'Student') {
+      headers.push('BatchName');
+      sampleRow.push('Morning-Batch-A');
+    }
+
+    const csvLines = [headers.join(','), sampleRow.join(',')];
+    const csv = csvLines.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${(role || 'User').toLowerCase()}_sample.csv"`);
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error('downloadUserSample error:', err);
+    return res.status(500).json({ message: 'Failed to download sample' });
+  }
+}
+
+async function listStaff(req, res) {
+  try {
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ message: 'Unauthorized' });
+
+    let institutionId = null;
+    if (actor.role === 'SuperAdmin') {
+      institutionId = req.query.institutionId;
+      if (!institutionId) {
+        return res.status(400).json({ message: 'institutionId is required for SuperAdmin' });
+      }
+    } else {
+      institutionId = actor.institutionId;
+      if (!institutionId) return res.status(400).json({ message: 'Institution context required' });
+    }
+
+    // Only admins can list staff
+    if (!['InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'].includes(actor.role)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const query = { institutionId: new ObjectId(institutionId) };
+    if (req.query.role) {
+      const roles = req.query.role.split(',').map(r => r.trim());
+      query.role = { $in: roles };
+    }
+
+    await connectMongo();
+    const db = getDB();
+    const staffList = await db
+      .collection(USERS)
+      .find(query)
+      .project({ password: 0 })
+      .toArray();
+
+    // Convert _id to id for frontend compatibility
+    const sanitized = staffList.map(user => {
+      const { _id, ...rest } = user;
+      return {
+        id: _id.toString(),
+        _id: _id.toString(),
+        ...rest,
+        institutionId: rest.institutionId?.toString(),
+        batchId: rest.batchId?.toString()
+      };
+    });
+
+    return res.status(200).json({
+      staff: sanitized
+    });
+  } catch (err) {
+    console.error('listStaff error:', err);
+    return res.status(500).json({ message: 'Failed to fetch staff' });
+  }
+}
+
+async function deleteStaff(req, res) {
+  try {
+    const { userId } = req.params;
+    const { institutionId, role: actorRole } = req.user;
+
+    // Verify the user exists and belongs to the same institution
+    const db = getDB();
+    const targetUser = await db.collection(USERS).findOne({
+      _id: new ObjectId(userId),
+      institutionId: new ObjectId(institutionId)
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found or not in your institution' });
+    }
+
+    // Only InstitutionAdmin and AcademicAdmin can delete staff
+    // Don't allow deleting yourself
+    if (targetUser._id.toString() === req.user.userId) {
+      return res.status(403).json({ message: 'Cannot delete yourself' });
+    }
+
+    // Delete the user
+    await db.collection(USERS).deleteOne({ _id: new ObjectId(userId) });
+
+    return res.status(200).json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+  } catch (err) {
+    console.error('deleteStaff error:', err);
+    return res.status(500).json({ message: 'Failed to delete user', error: err.message });
+  }
+}
+
+async function updateStaff(req, res) {
+  try {
+    const { userId } = req.params;
+    const { name, role, batchId } = req.body || {};
+    const { institutionId, role: actorRole } = req.user;
+
+    // Verify the user exists and belongs to the same institution
+    const db = getDB();
+    const targetUser = await db.collection(USERS).findOne({
+      _id: new ObjectId(userId),
+      institutionId: new ObjectId(institutionId)
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found or not in your institution' });
+    }
+
+    // Build update object
+    const updateObj = {
+      updatedAt: new Date()
+    };
+
+    if (name) updateObj.name = name;
+    if (role && canAssignRole(actorRole, role)) updateObj.role = role;
+    if (batchId !== undefined) {
+      updateObj.batchId = batchId ? new ObjectId(batchId) : null;
+    }
+
+    // Update the user
+    await db.collection(USERS).updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: updateObj }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'User updated successfully'
+    });
+  } catch (err) {
+    console.error('updateStaff error:', err);
+    return res.status(500).json({ message: 'Failed to update user', error: err.message });
+  }
+}
+
+async function getInstitutionDashboard(req, res) {
+  try {
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ message: 'Unauthorized' });
+
+    let institutionId = null;
+    if (actor.role === 'SuperAdmin') {
+      institutionId = req.query.institutionId;
+      if (!institutionId) {
+        return res.status(400).json({ message: 'institutionId is required for SuperAdmin' });
+      }
+    } else {
+      institutionId = actor.institutionId;
+      if (!institutionId) return res.status(400).json({ message: 'Institution context required' });
+    }
+
+    const db = getDB();
+    const instId = new ObjectId(String(institutionId));
+
+    // 1. Basic counts
+    const [studentCount, teacherCount, batchCount] = await Promise.all([
+      db.collection(USERS).countDocuments({ institutionId: instId, role: 'Student' }),
+      db.collection(USERS).countDocuments({ institutionId: instId, role: 'Teacher' }),
+      db.collection('batches').countDocuments({ institutionId: instId })
+    ]);
+
+    // 2. Class and Resource Stats
+    const Collections = require('../../database/collections');
+    const classCount = await db.collection(Collections.CB_LIVE_CLASSES).countDocuments({ institutionId: instId });
+    const resourceCount = await db.collection(Collections.CB_NOTES).countDocuments({ institutionId: instId });
+
+    // 3. Overall Engagement (from Analytics)
+    const analytics = await db.collection('analytics').aggregate([
+      { $match: { institutionId: instId } },
+      {
+        $group: {
+          _id: null,
+          totalViews: { $sum: '$totalViews' },
+          totalUniqueViewers: { $sum: '$uniqueViewers' },
+          totalWatchTime: { $sum: '$totalWatchTimeSeconds' }
+        }
+      }
+    ]).toArray();
+
+    const stats = analytics[0] || { totalViews: 0, totalUniqueViewers: 0, totalWatchTime: 0 };
+
+    // 4. Poll Stats
+    const pollStats = await db.collection(Collections.CB_POLLS).aggregate([
+      { $match: { institutionId: instId } },
+      { $group: { _id: null, count: { $count: {} }, votes: { $sum: { $sum: '$results.count' } } } }
+    ]).toArray();
+
+    const polls = pollStats[0] || { count: 0, votes: 0 };
+
+    return res.status(200).json({
+      summary: {
+        students: studentCount,
+        teachers: teacherCount,
+        batches: batchCount,
+        classesHeld: classCount,
+        resourcesUploaded: resourceCount
+      },
+      engagement: {
+        totalViews: stats.totalViews,
+        uniqueViewers: stats.totalUniqueViewers,
+        totalWatchTimeMinutes: Math.round(stats.totalWatchTime / 60),
+        totalPolls: polls.count,
+        totalVotes: polls.votes
+      },
+      status: 'success'
+    });
+  } catch (err) {
+    console.error('getInstitutionDashboard error:', err);
+    return res.status(500).json({ message: 'Failed to fetch dashboard data' });
+  }
+}
+
+module.exports = {
+  registerInstitution,
+  addStaff,
+  updateUserRole,
+  bulkAddStaff,
+  downloadBulkExport,
+  downloadUserSample,
+  listStaff,
+  deleteStaff,
+  updateStaff,
+  getInstitutionDashboard
+};
