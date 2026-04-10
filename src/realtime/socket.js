@@ -1424,9 +1424,16 @@ function initSocket(server) {
   return io;
 }
 
+const { Emitter } = require('@socket.io/redis-emitter');
+let redisEmitter = null;
+
 function getIO() {
-  if (!io) throw new Error('Socket.IO not initialized');
-  return io;
+  if (io) return io;
+  if (!redisEmitter && redis) {
+    redisEmitter = new Emitter(redis);
+  }
+  if (redisEmitter) return redisEmitter;
+  throw new Error('Socket.IO not initialized');
 }
 
 module.exports = { initSocket, getIO };
