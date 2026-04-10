@@ -73,7 +73,15 @@ async function ensureLiveClassAccess(req, live, options = {}) {
   }
 
   if (options.requireStudentBatch && role === 'Student') {
-    const requestBatchId = req.user?.batchId || req.user?.batch?._id || req.user?.batch;
+    let requestBatchId = req.user?.batchId || req.user?.batch?._id || req.user?.batch;
+    
+    // Fallback: If token is missing batchId, look it up in DB
+    if (!requestBatchId) {
+      const User = require('../auth/user.model');
+      const dbUser = await User.findById(currentUserId).select('batchId');
+      requestBatchId = dbUser?.batchId;
+    }
+
     if (!requestBatchId || String(timetable.batch) !== String(requestBatchId)) {
       throw new AppError('Forbidden: not enrolled in this batch', 403);
     }

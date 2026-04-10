@@ -45,7 +45,8 @@ const register = catchAsync(async (req, res, next) => {
   const payload = {
     sub: String(user._id),
     role: user.role,
-    institutionId: user.institutionId ? String(user.institutionId) : null
+    institutionId: user.institutionId ? String(user.institutionId) : null,
+    batchId: user.batchId ? String(user.batchId) : null
   };
   const accessToken = signAccessToken(payload);
   const refreshToken = signRefreshToken(payload);
@@ -86,7 +87,8 @@ const login = catchAsync(async (req, res, next) => {
   const payload = {
     sub: String(user._id),
     role: user.role,
-    institutionId: user.institutionId ? String(user.institutionId) : null
+    institutionId: user.institutionId ? String(user.institutionId) : null,
+    batchId: user.batchId ? String(user.batchId) : null
   };
   const accessToken = signAccessToken(payload);
   const refreshToken = signRefreshToken(payload);
@@ -107,7 +109,8 @@ const refresh = catchAsync(async (req, res, next) => {
   const payload = {
     sub: decoded.sub,
     role: decoded.role,
-    institutionId: decoded.institutionId || null
+    institutionId: decoded.institutionId || null,
+    batchId: decoded.batchId || null
   };
   const accessToken = signAccessToken(payload);
 
@@ -135,7 +138,8 @@ const changePassword = catchAsync(async (req, res, next) => {
   const payload = {
     sub: String(user._id),
     role: user.role,
-    institutionId: user.institutionId ? String(user.institutionId) : null
+    institutionId: user.institutionId ? String(user.institutionId) : null,
+    batchId: user.batchId ? String(user.batchId) : null
   };
   const accessToken = signAccessToken(payload);
   const refreshToken = signRefreshToken(payload);
