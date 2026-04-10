@@ -122,7 +122,7 @@ function getRoomState(roomId) {
 function initSocket(server) {
   io = new Server(server, {
     cors: {
-      origin: process.env.CORS_ORIGIN || '*',
+      origin: true, // Dynamically reflect requested origin
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       credentials: true,
     },

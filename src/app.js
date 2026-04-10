@@ -41,11 +41,8 @@ app.use(dbMiddleware);
 app.use(requestLogger);
 
 // CORS configuration
-const allowedOrigin = process.env.CORS_ORIGIN || '*';
 const corsOptions = {
-  origin: allowedOrigin.includes(',') 
-    ? allowedOrigin.split(',').map(o => o.trim()) 
-    : (allowedOrigin === '*' ? true : allowedOrigin),
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 };
