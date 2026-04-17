@@ -75,7 +75,7 @@ router.post(
 // Check stream status (polls YouTube API)
 router.get(
   '/:id/status',
-  requireRoles('Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
+  requireRoles('Student', 'Moderator', 'Teacher', 'InstitutionAdmin', 'AcademicAdmin', 'SuperAdmin'),
   checkStreamStatus
 );
 

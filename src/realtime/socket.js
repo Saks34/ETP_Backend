@@ -122,10 +122,12 @@ function getRoomState(roomId) {
 function initSocket(server) {
   io = new Server(server, {
     cors: {
-      origin: true, // Dynamically reflect requested origin
+      origin: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       credentials: true,
     },
+    transports: ['websocket'], // Force websockets
+    allowEIO3: true,
   });
 
   // Redis Adapter setup

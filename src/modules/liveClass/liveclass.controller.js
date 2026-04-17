@@ -50,6 +50,7 @@ async function ensureLiveClassAccess(req, live, options = {}) {
     const userInstId = req.user?.institutionId;
     const liveInstId = live.institutionId;
     if (!userInstId || String(userInstId) !== String(liveInstId)) {
+      console.warn(`[Access] 403 Cross-institution: userInst=${userInstId}, liveInst=${liveInstId}`);
       throw new AppError('Forbidden: cross-institution access', 403);
     }
   }
@@ -81,6 +82,7 @@ async function ensureLiveClassAccess(req, live, options = {}) {
   if (options.requireAssignedTeacher && role === 'Teacher') {
     const teacherId = timetable.teacher?._id || timetable.teacher;
     if (String(teacherId) !== String(currentUserId)) {
+      console.warn(`[Access] 403 Teacher mismatch: assigned=${teacherId}, current=${currentUserId}`);
       throw new AppError('Forbidden: not assigned teacher', 403);
     }
   }
@@ -412,7 +414,8 @@ const checkStreamStatus = catchAsync(async (req, res, next) => {
   const live = await LiveClass.findById(id);
   if (!live) return next(new AppError('LiveClass not found', 404));
 
-  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: true });
+  const isTeacher = req.user.role !== 'Student';
+  await ensureLiveClassAccess(req, live, { requireAssignedTeacher: isTeacher });
 
   const broadcastId = live.streamInfo?.broadcastId;
   if (!broadcastId) {
