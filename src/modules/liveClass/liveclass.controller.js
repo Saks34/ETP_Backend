@@ -43,31 +43,34 @@ async function ensureLiveClassAccess(req, live, options = {}) {
   }
 
   const role = req.user?.role;
-  const currentUserId = getRequestUserId(req);
+  const currentUserId = String(getRequestUserId(req));
+  const userInstId = req.user?.institutionId ? String(req.user.institutionId) : null;
+  const liveInstId = live.institutionId ? String(live.institutionId) : null;
 
-  // Cross-institution check
+  // 1. Cross-institution check (Strict for everyone except SuperAdmin)
   if (role !== 'SuperAdmin') {
-    const userInstId = req.user?.institutionId;
-    const liveInstId = live.institutionId;
-    if (!userInstId || String(userInstId) !== String(liveInstId)) {
+    if (!userInstId || userInstId !== liveInstId) {
       console.warn(`[Access] 403 Cross-institution: userInst=${userInstId}, liveInst=${liveInstId}`);
       throw new AppError('Forbidden: cross-institution access', 403);
     }
   }
 
-  if (!role || role === 'SuperAdmin') {
+  // 2. Privilege Bypass
+  // SuperAdmin, InstitutionAdmin, and AcademicAdmin can access any class within their institution
+  if (['SuperAdmin', 'InstitutionAdmin', 'AcademicAdmin'].includes(role)) {
     return null;
   }
 
+  // 3. Ownership/Enrollment Requirements Check
   const needsTimetable =
     options.requireAssignedTeacher ||
     (options.requireStudentBatch && role === 'Student');
 
   if (!needsTimetable) {
-    return null;
+    return null; // Same-institution access is sufficient
   }
 
-  // Use already populated timetable if available, otherwise fetch it
+  // Load Timetable (either from populated live object or fetch from DB)
   let timetable = live.timetableId;
   const isPopulated = timetable && typeof timetable === 'object' && (timetable.batch !== undefined || timetable._id !== undefined);
   
@@ -79,34 +82,43 @@ async function ensureLiveClassAccess(req, live, options = {}) {
     throw new AppError('Linked timetable not found', 404);
   }
 
+  // Robust ID extraction helper
+  const toId = (val) => {
+    if (!val) return null;
+    if (typeof val === 'string') return val;
+    return val._id ? String(val._id) : String(val);
+  };
+
+  // 4. Assigned Teacher Check
   if (options.requireAssignedTeacher && role === 'Teacher') {
-    const teacherId = timetable.teacher?._id || timetable.teacher;
-    if (String(teacherId) !== String(currentUserId)) {
-      console.warn(`[Access] 403 Teacher mismatch: assigned=${teacherId}, current=${currentUserId}`);
+    const assignedTeacherId = toId(timetable.teacher);
+    if (assignedTeacherId !== currentUserId) {
+      console.warn(`[Access] 403 Teacher mismatch: assigned=${assignedTeacherId}, current=${currentUserId}`);
       throw new AppError('Forbidden: not assigned teacher', 403);
     }
   }
 
+  // 5. Student Batch Check
   if (options.requireStudentBatch && role === 'Student') {
-    // Robust batch ID extraction from user session/token
-    let requestBatchId = req.user?.batchId || req.user?.batch?._id || req.user?.batch;
+    const timetableBatchId = toId(timetable.batch);
     
-    // Fallback: If token is missing batchId, look it up in DB
-    if (!requestBatchId) {
+    // Check main batchId in token
+    let userBatchId = toId(req.user?.batchId || req.user?.batch);
+    
+    // Fallback: Check DB if missing in token
+    if (!userBatchId) {
       const User = require('../auth/user.model');
       const dbUser = await User.findById(currentUserId).select('batchId');
-      requestBatchId = dbUser?.batchId;
+      userBatchId = toId(dbUser?.batchId);
     }
 
-    // Extract batch ID from timetable (handle populated object or ID)
-    const timetableBatchId = timetable.batch?._id || timetable.batch;
-
-    if (!requestBatchId || !timetableBatchId || String(timetableBatchId) !== String(requestBatchId)) {
-      // Final attempt: If the user has batches array (future-proofing/flexibility)
+    if (!userBatchId || userBatchId !== timetableBatchId) {
+      // Final attempt: Check multi-batch support (batches array)
       const userBatches = req.user?.batches || [];
-      const isInAnyBatch = userBatches.some(b => String(b?.id || b?._id || b) === String(timetableBatchId));
+      const isInAnyBatch = userBatches.some(b => toId(b) === timetableBatchId);
       
       if (!isInAnyBatch) {
+        console.warn(`[Access] 403 Student batch mismatch: target=${timetableBatchId}, current=${userBatchId}`);
         throw new AppError('Forbidden: not enrolled in this batch', 403);
       }
     }
