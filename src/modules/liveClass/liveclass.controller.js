@@ -42,14 +42,17 @@ async function ensureLiveClassAccess(req, live, options = {}) {
     throw new AppError('LiveClass not found', 404);
   }
 
-  if (req.user?.role !== 'SuperAdmin') {
-    if (!req.user?.institutionId || String(req.user.institutionId) !== String(live.institutionId)) {
+  const role = req.user?.role;
+  const currentUserId = getRequestUserId(req);
+
+  // Cross-institution check
+  if (role !== 'SuperAdmin') {
+    const userInstId = req.user?.institutionId;
+    const liveInstId = live.institutionId;
+    if (!userInstId || String(userInstId) !== String(liveInstId)) {
       throw new AppError('Forbidden: cross-institution access', 403);
     }
   }
-
-  const role = req.user?.role;
-  const currentUserId = getRequestUserId(req);
 
   if (!role || role === 'SuperAdmin') {
     return null;
@@ -63,16 +66,27 @@ async function ensureLiveClassAccess(req, live, options = {}) {
     return null;
   }
 
-  const timetable = await Timetable.findById(live.timetableId).select('teacher batch');
+  // Use already populated timetable if available, otherwise fetch it
+  let timetable = live.timetableId;
+  const isPopulated = timetable && typeof timetable === 'object' && (timetable.batch !== undefined || timetable._id !== undefined);
+  
+  if (!isPopulated) {
+    timetable = await Timetable.findById(live.timetableId).select('teacher batch institutionId');
+  }
+
   if (!timetable) {
     throw new AppError('Linked timetable not found', 404);
   }
 
-  if (options.requireAssignedTeacher && role === 'Teacher' && String(timetable.teacher) !== String(currentUserId)) {
-    throw new AppError('Forbidden: not assigned teacher', 403);
+  if (options.requireAssignedTeacher && role === 'Teacher') {
+    const teacherId = timetable.teacher?._id || timetable.teacher;
+    if (String(teacherId) !== String(currentUserId)) {
+      throw new AppError('Forbidden: not assigned teacher', 403);
+    }
   }
 
   if (options.requireStudentBatch && role === 'Student') {
+    // Robust batch ID extraction from user session/token
     let requestBatchId = req.user?.batchId || req.user?.batch?._id || req.user?.batch;
     
     // Fallback: If token is missing batchId, look it up in DB
@@ -82,8 +96,17 @@ async function ensureLiveClassAccess(req, live, options = {}) {
       requestBatchId = dbUser?.batchId;
     }
 
-    if (!requestBatchId || String(timetable.batch) !== String(requestBatchId)) {
-      throw new AppError('Forbidden: not enrolled in this batch', 403);
+    // Extract batch ID from timetable (handle populated object or ID)
+    const timetableBatchId = timetable.batch?._id || timetable.batch;
+
+    if (!requestBatchId || !timetableBatchId || String(timetableBatchId) !== String(requestBatchId)) {
+      // Final attempt: If the user has batches array (future-proofing/flexibility)
+      const userBatches = req.user?.batches || [];
+      const isInAnyBatch = userBatches.some(b => String(b?.id || b?._id || b) === String(timetableBatchId));
+      
+      if (!isInAnyBatch) {
+        throw new AppError('Forbidden: not enrolled in this batch', 403);
+      }
     }
   }
 
